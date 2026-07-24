@@ -285,9 +285,9 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     appTokenField.translatesAutoresizingMaskIntoConstraints = false
 
     NSLayoutConstraint.activate([
-      clientIDField.widthAnchor.constraint(equalToConstant: 520),
+      clientIDField.widthAnchor.constraint(equalToConstant: 420),
       clientIDField.heightAnchor.constraint(equalToConstant: 32),
-      appTokenField.widthAnchor.constraint(equalToConstant: 520),
+      appTokenField.widthAnchor.constraint(equalToConstant: 420),
       appTokenField.heightAnchor.constraint(equalToConstant: 32),
     ])
 
@@ -304,7 +304,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     stack.alignment = .leading
     stack.spacing = 6
     stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
-    stack.frame = NSRect(x: 0, y: 0, width: 530, height: 136)
+    stack.frame = NSRect(x: 0, y: 0, width: 430, height: 136)
 
     let alert = NSAlert()
     alert.messageText = "Finish creating the Slack app"
