@@ -280,67 +280,71 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     appTokenField.placeholderString = "xapp-…"
     appTokenField.frame.size = NSSize(width: 420, height: 24)
 
-    let clientIDLabel = NSTextField(
-      labelWithString: "Client ID — Basic Information → App Credentials"
-    )
-    let appTokenLabel = NSTextField(
-      labelWithString: "App token — Basic Information → App-Level Tokens"
-    )
-    let hint = NSTextField(
-      wrappingLabelWithString:
-        "Generate the app token with the connections:write scope. You will approve the user permissions on Slack's website next."
-    )
-    hint.textColor = .secondaryLabelColor
-    hint.frame.size = NSSize(width: 420, height: 38)
+    let clientIDLabel = NSTextField(labelWithString: "Client ID")
+    let appTokenLabel = NSTextField(labelWithString: "App-level token (xapp)")
 
     let stack = NSStackView(views: [
       clientIDLabel,
       clientIDField,
       appTokenLabel,
       appTokenField,
-      hint,
     ])
     stack.orientation = .vertical
     stack.alignment = .leading
     stack.spacing = 6
     stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
-    stack.frame = NSRect(x: 0, y: 0, width: 430, height: 124)
+    stack.frame = NSRect(x: 0, y: 0, width: 430, height: 102)
 
     let alert = NSAlert()
-    alert.messageText = "Enter the two app details"
+    alert.messageText = "Finish creating the Slack app"
     alert.informativeText =
-      "The Client ID is not secret. The app token is stored only in macOS Keychain."
+      """
+      The manifest is already on your clipboard.
+
+      1. In Slack, choose From a manifest and select your workspace.
+      2. Select YAML, press ⌘V, then choose Next and Create.
+      3. On Basic Information, copy Client ID from App Credentials.
+      4. Under App-Level Tokens, choose Generate Token and Scopes.
+      5. Name it Slack Menubar, add connections:write, and generate it.
+      6. Paste the Client ID and xapp token below.
+      """
     alert.alertStyle = .informational
     alert.accessoryView = stack
     alert.addButton(withTitle: "Connect with Slack")
-    alert.addButton(withTitle: "Back")
+    alert.addButton(withTitle: "Open Slack Apps")
     alert.addButton(withTitle: "Cancel")
 
     NSApplication.shared.activate(ignoringOtherApps: true)
-    let response = alert.runModal()
-    if response == .alertSecondButtonReturn {
-      configureSlack()
-      return
-    }
-    guard response == .alertFirstButtonReturn else {
-      return
-    }
+    while true {
+      let response = alert.runModal()
+      if response == .alertSecondButtonReturn {
+        openSlackAppManagement()
+        continue
+      }
+      guard response == .alertFirstButtonReturn else {
+        return
+      }
 
-    let clientID = clientIDField.stringValue.trimmingCharacters(
-      in: .whitespacesAndNewlines
-    )
-    let appToken = appTokenField.stringValue.trimmingCharacters(
-      in: .whitespacesAndNewlines
-    )
-    guard !clientID.isEmpty, appToken.hasPrefix("xapp-") else {
-      showError(
-        title: "Check the app details",
-        message: "Enter the Client ID and an app token beginning with xapp-."
+      let clientID = clientIDField.stringValue.trimmingCharacters(
+        in: .whitespacesAndNewlines
       )
-      showAppDetailsForm()
+      let appToken = appTokenField.stringValue.trimmingCharacters(
+        in: .whitespacesAndNewlines
+      )
+      guard !clientID.isEmpty, appToken.hasPrefix("xapp-") else {
+        showError(
+          title: "Check the app details",
+          message: "Enter the Client ID and an app token beginning with xapp-."
+        )
+        continue
+      }
+
+      startSlackAuthorization(clientID: clientID, appToken: appToken)
       return
     }
+  }
 
+  private func startSlackAuthorization(clientID: String, appToken: String) {
     let oauthRequest = SlackOAuthRequest(clientID: clientID, appToken: appToken)
     guard let authorizationURL = oauthRequest.authorizationURL else {
       showError(
