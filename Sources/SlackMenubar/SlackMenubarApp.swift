@@ -275,12 +275,21 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let clientIDField = NSTextField(string: existingCredentials?.clientID ?? "")
     clientIDField.placeholderString = "For example, 123456789.987654321"
     clientIDField.controlSize = .large
-    clientIDField.frame.size = NSSize(width: 460, height: 28)
+    clientIDField.font = .systemFont(ofSize: 14)
+    clientIDField.translatesAutoresizingMaskIntoConstraints = false
 
     let appTokenField = NSSecureTextField(string: existingCredentials?.appToken ?? "")
     appTokenField.placeholderString = "xapp-…"
     appTokenField.controlSize = .large
-    appTokenField.frame.size = NSSize(width: 460, height: 28)
+    appTokenField.font = .systemFont(ofSize: 14)
+    appTokenField.translatesAutoresizingMaskIntoConstraints = false
+
+    NSLayoutConstraint.activate([
+      clientIDField.widthAnchor.constraint(equalToConstant: 520),
+      clientIDField.heightAnchor.constraint(equalToConstant: 32),
+      appTokenField.widthAnchor.constraint(equalToConstant: 520),
+      appTokenField.heightAnchor.constraint(equalToConstant: 32),
+    ])
 
     let clientIDLabel = NSTextField(labelWithString: "Client ID")
     let appTokenLabel = NSTextField(labelWithString: "App-level token (xapp)")
@@ -295,7 +304,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     stack.alignment = .leading
     stack.spacing = 6
     stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
-    stack.frame = NSRect(x: 0, y: 0, width: 470, height: 124)
+    stack.frame = NSRect(x: 0, y: 0, width: 530, height: 136)
 
     let alert = NSAlert()
     alert.messageText = "Finish creating the Slack app"
@@ -546,12 +555,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     pasteboard.clearContents()
     pasteboard.setString(manifest, forType: .string)
 
-    var components = URLComponents(string: "https://api.slack.com/apps")
-    components?.queryItems = [
-      URLQueryItem(name: "new_app", value: "1"),
-      URLQueryItem(name: "manifest_yaml", value: manifest),
-    ]
-    guard let url = components?.url else {
+    guard let url = URL(string: "https://api.slack.com/apps?new_app=1") else {
       showError(
         title: "Could not open Slack app creation",
         message: "Use Copy Slack App Manifest from the menu as a fallback."
