@@ -415,6 +415,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     window.title = "Slack Menubar Setup"
     window.contentView = contentView
     window.isReleasedWhenClosed = false
+    window.level = .floating
     window.center()
 
     setupWindow = window
