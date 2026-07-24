@@ -17,6 +17,9 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var connectionState: SlackConnectionState = .unconfigured
   private var setupError: String?
   private var pendingOAuthRequest: SlackOAuthRequest?
+  private var setupAlert: NSAlert?
+  private var setupClientIDField: NSTextField?
+  private var setupAppTokenField: NSSecureTextField?
 
   static func main() {
     let application = NSApplication.shared
@@ -27,6 +30,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    configureApplicationMenu()
     statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
     let menu = NSMenu()
@@ -73,6 +77,53 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   func menuWillOpen(_ menu: NSMenu) {
     rebuildMenu(menu)
+  }
+
+  private func configureApplicationMenu() {
+    let mainMenu = NSMenu()
+
+    let applicationItem = NSMenuItem()
+    let applicationMenu = NSMenu()
+    applicationMenu.addItem(
+      withTitle: "Quit Slack Menubar",
+      action: #selector(quit),
+      keyEquivalent: "q"
+    ).target = self
+    applicationItem.submenu = applicationMenu
+    mainMenu.addItem(applicationItem)
+
+    let editItem = NSMenuItem()
+    let editMenu = NSMenu(title: "Edit")
+    editMenu.addItem(
+      withTitle: "Undo",
+      action: Selector(("undo:")),
+      keyEquivalent: "z"
+    )
+    editMenu.addItem(.separator())
+    editMenu.addItem(
+      withTitle: "Cut",
+      action: #selector(NSText.cut(_:)),
+      keyEquivalent: "x"
+    )
+    editMenu.addItem(
+      withTitle: "Copy",
+      action: #selector(NSText.copy(_:)),
+      keyEquivalent: "c"
+    )
+    editMenu.addItem(
+      withTitle: "Paste",
+      action: #selector(NSText.paste(_:)),
+      keyEquivalent: "v"
+    )
+    editMenu.addItem(
+      withTitle: "Select All",
+      action: #selector(NSText.selectAll(_:)),
+      keyEquivalent: "a"
+    )
+    editItem.submenu = editMenu
+    mainMenu.addItem(editItem)
+
+    NSApplication.shared.mainMenu = mainMenu
   }
 
   private func loadCredentialsAndConnect() {
@@ -260,8 +311,8 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     NSApplication.shared.activate(ignoringOtherApps: true)
     switch alert.runModal() {
     case .alertFirstButtonReturn:
-      openPrefilledSlackAppCreation()
       showAppDetailsForm()
+      openPrefilledSlackAppCreation()
     case .alertSecondButtonReturn:
       showAppDetailsForm()
     default:
@@ -270,6 +321,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func showAppDetailsForm() {
+    closeSetupForm()
     let existingCredentials = try? SlackCredentialStore.load()
 
     let clientIDField = NSTextField(string: existingCredentials?.clientID ?? "")
@@ -319,38 +371,67 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       """
     alert.alertStyle = .informational
     alert.accessoryView = stack
-    alert.addButton(withTitle: "Connect with Slack")
-    alert.addButton(withTitle: "Open Slack Apps")
-    alert.addButton(withTitle: "Cancel")
+    let connectButton = alert.addButton(withTitle: "Connect with Slack")
+    connectButton.target = self
+    connectButton.action = #selector(connectFromSetupForm)
+    let appsButton = alert.addButton(withTitle: "Open Slack Apps")
+    appsButton.target = self
+    appsButton.action = #selector(openSlackAppsFromSetupForm)
+    let cancelButton = alert.addButton(withTitle: "Cancel")
+    cancelButton.target = self
+    cancelButton.action = #selector(cancelSetupForm)
 
+    setupAlert = alert
+    setupClientIDField = clientIDField
+    setupAppTokenField = appTokenField
+
+    let window = alert.window
+    window.isReleasedWhenClosed = false
     NSApplication.shared.activate(ignoringOtherApps: true)
-    while true {
-      let response = alert.runModal()
-      if response == .alertSecondButtonReturn {
-        openSlackAppManagement()
-        continue
-      }
-      guard response == .alertFirstButtonReturn else {
-        return
-      }
+    window.makeKeyAndOrderFront(nil)
+    window.makeFirstResponder(clientIDField)
+  }
 
-      let clientID = clientIDField.stringValue.trimmingCharacters(
-        in: .whitespacesAndNewlines
-      )
-      let appToken = appTokenField.stringValue.trimmingCharacters(
-        in: .whitespacesAndNewlines
-      )
-      guard !clientID.isEmpty, appToken.hasPrefix("xapp-") else {
-        showError(
-          title: "Check the app details",
-          message: "Enter the Client ID and an app token beginning with xapp-."
-        )
-        continue
-      }
-
-      startSlackAuthorization(clientID: clientID, appToken: appToken)
+  @objc private func connectFromSetupForm() {
+    guard
+      let clientIDField = setupClientIDField,
+      let appTokenField = setupAppTokenField
+    else {
       return
     }
+
+    let clientID = clientIDField.stringValue.trimmingCharacters(
+      in: .whitespacesAndNewlines
+    )
+    let appToken = appTokenField.stringValue.trimmingCharacters(
+      in: .whitespacesAndNewlines
+    )
+    guard !clientID.isEmpty, appToken.hasPrefix("xapp-") else {
+      showError(
+        title: "Check the app details",
+        message: "Enter the Client ID and an app token beginning with xapp-."
+      )
+      setupAlert?.window.makeKeyAndOrderFront(nil)
+      return
+    }
+
+    closeSetupForm()
+    startSlackAuthorization(clientID: clientID, appToken: appToken)
+  }
+
+  @objc private func openSlackAppsFromSetupForm() {
+    openSlackAppManagement()
+  }
+
+  @objc private func cancelSetupForm() {
+    closeSetupForm()
+  }
+
+  private func closeSetupForm() {
+    setupAlert?.window.close()
+    setupAlert = nil
+    setupClientIDField = nil
+    setupAppTokenField = nil
   }
 
   private func startSlackAuthorization(clientID: String, appToken: String) {
