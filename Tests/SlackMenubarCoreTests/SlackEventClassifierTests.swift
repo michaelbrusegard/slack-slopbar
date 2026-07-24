@@ -133,6 +133,41 @@ struct SlackEventClassifierTests {
     #expect(envelope.payload?.teamID == "T123")
   }
 
+  @Test("Read markers include only messages read in the same conversation")
+  func readMarkers() {
+    let notification = SlackMenuNotification(
+      teamID: "T123",
+      channelID: "D123",
+      messageTimestamp: "1700000000.000002",
+      senderName: "Joel",
+      conversationName: "Direct message",
+      kind: .directMessage,
+      receivedAt: Date()
+    )
+
+    #expect(
+      SlackReadMarker.includes(
+        notification,
+        channelID: "D123",
+        lastRead: "1700000000.000002"
+      )
+    )
+    #expect(
+      SlackReadMarker.includes(
+        notification,
+        channelID: "D123",
+        lastRead: "1700000000.000001"
+      ) == false
+    )
+    #expect(
+      SlackReadMarker.includes(
+        notification,
+        channelID: "C999",
+        lastRead: "1800000000.000000"
+      ) == false
+    )
+  }
+
   private func decodeEvent(_ json: String) throws -> SlackMessageEvent {
     try JSONDecoder().decode(SlackMessageEvent.self, from: Data(json.utf8))
   }

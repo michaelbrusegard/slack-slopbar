@@ -24,6 +24,11 @@ enum SlackConnectionState: Equatable {
   }
 }
 
+struct SlackConversationReadState: Sendable {
+  let channelID: String
+  let lastRead: String
+}
+
 @MainActor
 final class SlackAPIService {
   var onStateChange: ((SlackConnectionState) -> Void)?
@@ -59,6 +64,42 @@ final class SlackAPIService {
 
   func disconnect() {
     disconnect(setState: true)
+  }
+
+  func readStates(
+    for channelIDs: [String]
+  ) async -> [SlackConversationReadState] {
+    guard
+      !channelIDs.isEmpty,
+      let token = try? await currentCredentials().userToken
+    else {
+      return []
+    }
+
+    var states: [SlackConversationReadState] = []
+    for channelID in channelIDs.prefix(20) {
+      guard !Task.isCancelled else {
+        break
+      }
+      let response: ConversationInfoResponse? = try? await request(
+        method: "conversations.info",
+        token: token,
+        queryItems: [URLQueryItem(name: "channel", value: channelID)]
+      )
+      if
+        response?.ok == true,
+        let lastRead = response?.channel?.lastRead,
+        !lastRead.isEmpty
+      {
+        states.append(
+          SlackConversationReadState(
+            channelID: channelID,
+            lastRead: lastRead
+          )
+        )
+      }
+    }
+    return states
   }
 
   private func disconnect(setState: Bool) {
@@ -435,6 +476,12 @@ private struct UserInfoResponse: Decodable {
 private struct ConversationInfoResponse: Decodable {
   struct Conversation: Decodable {
     let name: String?
+    let lastRead: String?
+
+    enum CodingKeys: String, CodingKey {
+      case name
+      case lastRead = "last_read"
+    }
   }
 
   let ok: Bool

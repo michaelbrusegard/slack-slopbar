@@ -21,6 +21,8 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var setupClientIDField: NSTextField?
   private var setupAppTokenField: NSSecureTextField?
   private var setupWorkspacePopup: NSPopUpButton?
+  private var readStateTask: Task<Void, Never>?
+  private var isSynchronizingReadState = false
 
   static func main() {
     let application = NSApplication.shared
@@ -61,9 +63,11 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     refreshUI()
     loadCredentialsAndConnect()
+    startReadStateSync()
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    readStateTask?.cancel()
     apiService.disconnect()
   }
 
@@ -78,6 +82,9 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   func menuWillOpen(_ menu: NSMenu) {
     rebuildMenu(menu)
+    Task { [weak self] in
+      await self?.synchronizeReadState()
+    }
   }
 
   private func configureApplicationMenu() {
@@ -139,6 +146,44 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     } catch {
       setupError = "Keychain: \(error.localizedDescription)"
       refreshUI()
+    }
+  }
+
+  private func startReadStateSync() {
+    readStateTask?.cancel()
+    readStateTask = Task { [weak self] in
+      while !Task.isCancelled {
+        await self?.synchronizeReadState()
+        do {
+          try await Task.sleep(for: .seconds(30))
+        } catch {
+          return
+        }
+      }
+    }
+  }
+
+  private func synchronizeReadState() async {
+    guard !isSynchronizingReadState else {
+      return
+    }
+    let channelIDs = Array(
+      Set(notificationStore.notifications.map(\.channelID))
+    ).sorted()
+    guard !channelIDs.isEmpty else {
+      return
+    }
+
+    isSynchronizingReadState = true
+    defer {
+      isSynchronizingReadState = false
+    }
+    let states = await apiService.readStates(for: channelIDs)
+    for state in states {
+      notificationStore.removeRead(
+        in: state.channelID,
+        through: state.lastRead
+      )
     }
   }
 
@@ -246,26 +291,6 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       action: #selector(configureSlack),
       keyEquivalent: ""
     ).target = self
-    menu.addItem(
-      withTitle: "Reconnect",
-      action: #selector(reconnect),
-      keyEquivalent: "r"
-    ).target = self
-    menu.addItem(
-      withTitle: "Create or Manage Slack App…",
-      action: #selector(openSlackAppManagement),
-      keyEquivalent: ""
-    ).target = self
-    menu.addItem(
-      withTitle: "Copy Slack App Manifest",
-      action: #selector(copySlackAppManifest),
-      keyEquivalent: ""
-    ).target = self
-    menu.addItem(
-      withTitle: "Remove Slack Credentials…",
-      action: #selector(removeCredentials),
-      keyEquivalent: ""
-    ).target = self
 
     let launchAtLogin = NSMenuItem(
       title: "Launch at Login",
@@ -328,24 +353,30 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let createTitle = setupSectionTitle("1. Create or open the Slack app")
     let createDescription = setupDescription(
       """
-      Create Slack App copies the manifest and opens Slack. Choose From a manifest, select YAML, paste, select your workspace underneath, then choose Next and Create.
+      Copy the manifest, then open Slack. Choose From a manifest, select YAML, paste, select your workspace underneath, then choose Next and Create.
       """
     )
+    let copyButton = NSButton(
+      title: "Copy Manifest",
+      target: self,
+      action: #selector(copyManifestFromSetupForm(_:))
+    )
+    copyButton.bezelStyle = .rounded
     let createButton = NSButton(
       title: "Create Slack App",
       target: self,
       action: #selector(createSlackAppFromSetupForm)
     )
     createButton.bezelStyle = .rounded
+    let createButtons = NSStackView(views: [copyButton, createButton])
+    createButtons.orientation = .horizontal
+    createButtons.spacing = 8
     let openButton = NSButton(
       title: "Open Existing Slack App",
       target: self,
       action: #selector(openSlackAppsFromSetupForm)
     )
     openButton.bezelStyle = .rounded
-    let appButtons = NSStackView(views: [createButton, openButton])
-    appButtons.orientation = .horizontal
-    appButtons.spacing = 8
 
     let detailsTitle = setupSectionTitle("2. Choose the workspace and enter app details")
     let detailsDescription = setupDescription(
@@ -397,7 +428,8 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       setupSeparator(),
       createTitle,
       createDescription,
-      appButtons,
+      createButtons,
+      openButton,
       setupSeparator(),
       detailsTitle,
       detailsDescription,
@@ -484,7 +516,12 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   @objc private func createSlackAppFromSetupForm() {
-    openPrefilledSlackAppCreation()
+    openSlackAppCreation()
+  }
+
+  @objc private func copyManifestFromSetupForm(_ sender: NSButton) {
+    copySlackAppManifest()
+    sender.title = "Manifest Copied"
   }
 
   @objc private func connectFromSetupForm() {
@@ -629,46 +666,6 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     alert.runModal()
   }
 
-  @objc private func reconnect() {
-    do {
-      guard let credentials = try SlackCredentialStore.load() else {
-        configureSlack()
-        return
-      }
-      setupError = nil
-      apiService.connect(using: credentials)
-    } catch {
-      setupError = "Keychain: \(error.localizedDescription)"
-      refreshUI()
-    }
-  }
-
-  @objc private func removeCredentials() {
-    let alert = NSAlert()
-    alert.messageText = "Remove Slack API credentials?"
-    alert.informativeText =
-      "Slack Menubar will disconnect and clear its pending notifications."
-    alert.alertStyle = .warning
-    alert.addButton(withTitle: "Remove")
-    alert.addButton(withTitle: "Cancel")
-
-    NSApplication.shared.activate(ignoringOtherApps: true)
-    guard alert.runModal() == .alertFirstButtonReturn else {
-      return
-    }
-
-    do {
-      try SlackCredentialStore.remove()
-      apiService.disconnect()
-      notificationStore.clear()
-      connectionState = .unconfigured
-      setupError = nil
-    } catch {
-      setupError = "Keychain: \(error.localizedDescription)"
-    }
-    refreshUI()
-  }
-
   @objc private func openNotification(_ sender: NSMenuItem) {
     guard
       let notificationID = sender.representedObject as? String,
@@ -724,23 +721,11 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     pasteboard.setString(manifest, forType: .string)
   }
 
-  private func openPrefilledSlackAppCreation() {
-    guard let manifest = bundledSlackAppManifest() else {
-      showError(
-        title: "Manifest unavailable",
-        message: "Slack Menubar could not load its bundled app configuration."
-      )
-      return
-    }
-
-    let pasteboard = NSPasteboard.general
-    pasteboard.clearContents()
-    pasteboard.setString(manifest, forType: .string)
-
+  private func openSlackAppCreation() {
     guard let url = URL(string: "https://api.slack.com/apps?new_app=1") else {
       showError(
         title: "Could not open Slack app creation",
-        message: "Use Copy Slack App Manifest from the menu as a fallback."
+        message: "Open https://api.slack.com/apps in a browser."
       )
       return
     }

@@ -40,6 +40,16 @@ final class SlackNotificationStore {
     notifications.removeAll { $0.id == id }
   }
 
+  func removeRead(in channelID: String, through lastRead: String) {
+    notifications.removeAll { notification in
+      SlackReadMarker.includes(
+        notification,
+        channelID: channelID,
+        lastRead: lastRead
+      )
+    }
+  }
+
   func clear() {
     notifications.removeAll()
   }

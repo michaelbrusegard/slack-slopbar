@@ -94,6 +94,23 @@ public struct SlackMenuNotification: Codable, Equatable, Identifiable, Sendable 
   }
 }
 
+public enum SlackReadMarker {
+  public static func includes(
+    _ notification: SlackMenuNotification,
+    channelID: String,
+    lastRead: String
+  ) -> Bool {
+    guard
+      notification.channelID == channelID,
+      let messageTimestamp = Decimal(string: notification.messageTimestamp),
+      let readTimestamp = Decimal(string: lastRead)
+    else {
+      return false
+    }
+    return messageTimestamp <= readTimestamp
+  }
+}
+
 public enum SlackEventClassifier {
   private static let supportedSubtypes: Set<String> = [
     "bot_message",

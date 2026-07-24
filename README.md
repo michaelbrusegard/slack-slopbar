@@ -1,7 +1,7 @@
 # Slack Menubar
 
-A native macOS menu-bar utility that keeps direct messages and personal Slack
-mentions visible until you acknowledge them.
+A native macOS menu-bar utility that keeps unread direct messages and personal
+Slack mentions visible.
 
 Slack Menubar connects directly to Slack using a private Slack app and Socket
 Mode. It does not rely on Slack's unreliable macOS Dock badge and does not need
@@ -14,18 +14,21 @@ a hosted server.
 - The pending count appears beside the icon.
 - The menu identifies the sender and whether the event was a DM or mention.
 - Selecting an item opens its Slack conversation and removes the item.
+- Reading a conversation in Slack clears its matching menu notifications
+  automatically.
 - **Clear All Notifications** acknowledges everything without opening Slack.
 
-Pending items persist across app restarts. Slack auto-marking a visible
-conversation as read does not remove them.
+Pending items persist across app restarts. While notifications are pending,
+Slack Menubar checks their conversations' read markers every 30 seconds and
+whenever you open the menu.
 
 ## Slack app setup
 
 Slack Menubar includes a setup assistant. Open the menu-bar item and choose
 **Slack Setup Assistant…**:
 
-1. Select **Create Slack App**. The assistant copies the ready-made manifest
-   and opens Slack's app-creation page.
+1. Select **Copy Manifest**, then **Create Slack App**. The assistant opens
+   Slack's app-creation page.
 2. If Slack shows its app-type chooser, select **From a manifest**, select
    **YAML**, and paste. Select your workspace underneath the YAML, choose
    **Next**, review the configuration, and create the app.
