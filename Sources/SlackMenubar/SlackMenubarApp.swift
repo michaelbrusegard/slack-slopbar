@@ -248,7 +248,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       """
       Slack Menubar uses a private Slack app in your workspace.
 
-      1. Create the app from the ready-made configuration.
+      1. Create the app from the manifest copied for you.
       2. Copy its Client ID and generate one Socket Mode app token.
       3. Approve access in Slack. The user token is handled automatically.
       """
@@ -533,6 +533,10 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       )
       return
     }
+
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(manifest, forType: .string)
 
     var components = URLComponents(string: "https://api.slack.com/apps")
     components?.queryItems = [

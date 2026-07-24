@@ -24,9 +24,11 @@ conversation as read does not remove them.
 Slack Menubar includes a setup assistant. Open the menu-bar item and choose
 **Slack Setup Assistant…**:
 
-1. Select **Create Slack App**. The assistant opens Slack's app-creation page
-   with the ready-made configuration already filled in.
-2. Choose your workspace, review the configuration, and create the app.
+1. Select **Create Slack App**. The assistant copies the ready-made manifest
+   and opens Slack's app-creation page.
+2. If Slack shows its app-type chooser, select **From a manifest**, choose your
+   workspace, select **YAML**, and paste. Review the configuration and create
+   the app.
 3. Under **Basic Information → App Credentials**, copy the **Client ID**.
 4. On the same page under **App-Level Tokens**, select **Generate Token and
    Scopes**. Name it `Slack Menubar`, add `connections:write`, and copy the
