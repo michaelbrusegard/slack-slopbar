@@ -8,13 +8,15 @@ need a Slack token, send data anywhere, or inspect message contents.
 
 ## Status icons
 
-- `bell.badge.fill`: Slack has at least one unread notification
-- `bell`: Slack has no unread notifications
+- Filled four-color Slack-style mark: Slack has at least one unread notification
+- Outlined monochrome Slack-style mark: Slack has no unread notifications
 - `bell.slash`: Slack is not running and does not have a visible Dock item
 - `exclamationmark.triangle`: Accessibility permission is required
 
 When macOS exposes a numeric badge value, it is displayed beside the menu-bar
-icon.
+icon. The unread mark deliberately opts out of the standard macOS template
+tint so its notification colors remain visible in both light and dark menu
+bars.
 
 ## Requirements
 
@@ -71,4 +73,3 @@ Message text, workspace information, and account credentials are never read.
   Slack notification preferences can affect whether the badge appears.
 - Rebuilding or moving an ad-hoc-signed app can cause macOS to request
   Accessibility permission again.
-

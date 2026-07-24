@@ -76,36 +76,39 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       return
     }
 
-    let symbolName: String
+    let image: NSImage?
     let accessibilityDescription: String
 
     switch currentStatus {
     case .unread(_, let count):
-      symbolName = "bell.badge.fill"
       accessibilityDescription =
         count.map {
           "Slack has \($0) unread notifications"
         } ?? "Slack has an unread notification"
+      image = SlackStatusIcon.slackMark(filled: true)
       button.title = count.map { " \($0)" } ?? ""
     case .noUnread:
-      symbolName = "bell"
       accessibilityDescription = "Slack has no unread notifications"
+      image = SlackStatusIcon.slackMark(filled: false)
       button.title = ""
     case .slackUnavailable:
-      symbolName = "bell.slash"
       accessibilityDescription = "Slack is unavailable"
+      image = SlackStatusIcon.systemSymbol(
+        named: "bell.slash",
+        accessibilityDescription: accessibilityDescription
+      )
       button.title = ""
     case .accessibilityPermissionRequired:
-      symbolName = "exclamationmark.triangle"
       accessibilityDescription = "Slack Menubar needs Accessibility permission"
+      image = SlackStatusIcon.systemSymbol(
+        named: "exclamationmark.triangle",
+        accessibilityDescription: accessibilityDescription
+      )
       button.title = ""
     }
 
-    button.image = NSImage(
-      systemSymbolName: symbolName,
-      accessibilityDescription: accessibilityDescription
-    )
-    button.image?.isTemplate = true
+    button.image = image
+    button.setAccessibilityLabel(accessibilityDescription)
     button.toolTip = accessibilityDescription
   }
 
