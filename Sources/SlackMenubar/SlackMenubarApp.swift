@@ -301,12 +301,13 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       """
       The manifest is already on your clipboard.
 
-      1. In Slack, choose From a manifest and select your workspace.
-      2. Select YAML, press ⌘V, then choose Next and Create.
-      3. On Basic Information, copy Client ID from App Credentials.
-      4. Under App-Level Tokens, choose Generate Token and Scopes.
-      5. Name it Slack Menubar, add connections:write, and generate it.
-      6. Paste the Client ID and xapp token below.
+      1. In Slack, choose From a manifest.
+      2. Select YAML, press ⌘V, then choose Next.
+      3. Select your workspace, review the configuration, and choose Create.
+      4. On Basic Information, copy Client ID from App Credentials.
+      5. Under App-Level Tokens, choose Generate Token and Scopes.
+      6. Name it Slack Menubar, add connections:write, and generate it.
+      7. Paste the Client ID and xapp token below.
       """
     alert.alertStyle = .informational
     alert.accessoryView = stack

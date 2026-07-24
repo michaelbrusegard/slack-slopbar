@@ -26,9 +26,9 @@ Slack Menubar includes a setup assistant. Open the menu-bar item and choose
 
 1. Select **Create Slack App**. The assistant copies the ready-made manifest
    and opens Slack's app-creation page.
-2. If Slack shows its app-type chooser, select **From a manifest**, choose your
-   workspace, select **YAML**, and paste. Review the configuration and create
-   the app.
+2. If Slack shows its app-type chooser, select **From a manifest**, select
+   **YAML**, and paste. Choose **Next**, select your workspace, review the
+   configuration, and create the app.
 3. Under **Basic Information → App Credentials**, copy the **Client ID**.
 4. On the same page under **App-Level Tokens**, select **Generate Token and
    Scopes**. Name it `Slack Menubar`, add `connections:write`, and copy the
