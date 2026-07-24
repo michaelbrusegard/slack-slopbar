@@ -4,6 +4,7 @@ import Foundation
 struct SlackOAuthRequest: Sendable {
   let clientID: String
   let appToken: String
+  let teamID: String?
   let state: String
   let codeVerifier: String
 
@@ -12,7 +13,7 @@ struct SlackOAuthRequest: Sendable {
       Data(SHA256.hash(data: Data(codeVerifier.utf8)))
     )
     var components = URLComponents(string: "https://slack.com/oauth/v2/authorize")
-    components?.queryItems = [
+    var queryItems = [
       URLQueryItem(name: "client_id", value: clientID),
       URLQueryItem(name: "scope", value: ""),
       URLQueryItem(name: "user_scope", value: SlackOAuthClient.userScopes.joined(separator: ",")),
@@ -21,12 +22,17 @@ struct SlackOAuthRequest: Sendable {
       URLQueryItem(name: "code_challenge", value: challenge),
       URLQueryItem(name: "code_challenge_method", value: "S256"),
     ]
+    if let teamID {
+      queryItems.append(URLQueryItem(name: "team", value: teamID))
+    }
+    components?.queryItems = queryItems
     return components?.url
   }
 
-  init(clientID: String, appToken: String) {
+  init(clientID: String, appToken: String, teamID: String?) {
     self.clientID = clientID
     self.appToken = appToken
+    self.teamID = teamID
     state = Self.randomURLSafeString(length: 32)
     codeVerifier = Self.randomURLSafeString(length: 64)
   }

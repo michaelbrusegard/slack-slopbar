@@ -20,6 +20,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var setupWindow: NSWindow?
   private var setupClientIDField: NSTextField?
   private var setupAppTokenField: NSSecureTextField?
+  private var setupWorkspacePopup: NSPopUpButton?
 
   static func main() {
     let application = NSApplication.shared
@@ -300,6 +301,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     let existingCredentials = try? SlackCredentialStore.load()
+    let workspaceSelection = SlackWorkspaceDiscovery.load()
 
     let clientIDField = NSTextField(string: existingCredentials?.clientID ?? "")
     clientIDField.placeholderString = "For example, 123456789.987654321"
@@ -345,19 +347,39 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     appButtons.orientation = .horizontal
     appButtons.spacing = 8
 
-    let detailsTitle = setupSectionTitle("2. Enter the two app details")
+    let detailsTitle = setupSectionTitle("2. Choose the workspace and enter app details")
     let detailsDescription = setupDescription(
       """
-      On Basic Information, copy Client ID from App Credentials. Under App-Level Tokens, generate a token named Slack Menubar with the connections:write scope.
+      Select the same workspace used during app creation. Then, on Basic Information, copy Client ID from App Credentials. Under App-Level Tokens, generate a token named Slack Menubar with the connections:write scope.
       """
     )
+    let workspaceLabel = setupFieldLabel("Target workspace")
+    let workspacePopup = NSPopUpButton()
+    workspacePopup.translatesAutoresizingMaskIntoConstraints = false
+    workspacePopup.widthAnchor.constraint(equalToConstant: 420).isActive = true
+    for workspace in workspaceSelection.workspaces {
+      workspacePopup.addItem(withTitle: workspace.name)
+      workspacePopup.lastItem?.representedObject = workspace.id
+    }
+    if
+      let selectedID = workspaceSelection.selectedWorkspaceID,
+      let index = workspacePopup.itemArray.firstIndex(where: {
+        $0.representedObject as? String == selectedID
+      })
+    {
+      workspacePopup.selectItem(at: index)
+    }
+    if workspacePopup.numberOfItems == 0 {
+      workspacePopup.addItem(withTitle: "Choose on Slack's authorization page")
+      workspacePopup.lastItem?.representedObject = nil
+    }
     let clientIDLabel = setupFieldLabel("Client ID")
     let appTokenLabel = setupFieldLabel("App-level token (xapp)")
 
-    let authorizeTitle = setupSectionTitle("3. Authorize in the correct workspace")
+    let authorizeTitle = setupSectionTitle("3. Authorize your Slack account")
     let authorizeDescription = setupDescription(
       """
-      Slack may default to another signed-in workspace. On the permission screen, use Slack's workspace picker to select the same workspace where you created the app—Quest in this case—before choosing Allow. Slack then returns here automatically.
+      The selected workspace is pinned in the authorization request. Confirm that Slack shows the same workspace before choosing Allow. Slack then returns here automatically.
       """
     )
     let connectButton = NSButton(
@@ -379,6 +401,8 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       setupSeparator(),
       detailsTitle,
       detailsDescription,
+      workspaceLabel,
+      workspacePopup,
       clientIDLabel,
       clientIDField,
       appTokenLabel,
@@ -409,7 +433,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     ])
 
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 500, height: 590),
+      contentRect: NSRect(x: 0, y: 0, width: 500, height: 650),
       styleMask: [.titled, .closable],
       backing: .buffered,
       defer: false
@@ -423,6 +447,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     setupWindow = window
     setupClientIDField = clientIDField
     setupAppTokenField = appTokenField
+    setupWorkspacePopup = workspacePopup
 
     NSApplication.shared.activate(ignoringOtherApps: true)
     window.makeKeyAndOrderFront(nil)
@@ -476,6 +501,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let appToken = appTokenField.stringValue.trimmingCharacters(
       in: .whitespacesAndNewlines
     )
+    let teamID = setupWorkspacePopup?.selectedItem?.representedObject as? String
     guard !clientID.isEmpty, appToken.hasPrefix("xapp-") else {
       showError(
         title: "Check the app details",
@@ -486,7 +512,11 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     closeSetupForm()
-    startSlackAuthorization(clientID: clientID, appToken: appToken)
+    startSlackAuthorization(
+      clientID: clientID,
+      appToken: appToken,
+      teamID: teamID
+    )
   }
 
   @objc private func openSlackAppsFromSetupForm() {
@@ -498,10 +528,19 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     setupWindow = nil
     setupClientIDField = nil
     setupAppTokenField = nil
+    setupWorkspacePopup = nil
   }
 
-  private func startSlackAuthorization(clientID: String, appToken: String) {
-    let oauthRequest = SlackOAuthRequest(clientID: clientID, appToken: appToken)
+  private func startSlackAuthorization(
+    clientID: String,
+    appToken: String,
+    teamID: String?
+  ) {
+    let oauthRequest = SlackOAuthRequest(
+      clientID: clientID,
+      appToken: appToken,
+      teamID: teamID
+    )
     guard let authorizationURL = oauthRequest.authorizationURL else {
       showError(
         title: "Could not start Slack authorization",
