@@ -354,9 +354,11 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let clientIDLabel = setupFieldLabel("Client ID")
     let appTokenLabel = setupFieldLabel("App-level token (xapp)")
 
-    let authorizeTitle = setupSectionTitle("3. Authorize your Slack account")
+    let authorizeTitle = setupSectionTitle("3. Authorize in the correct workspace")
     let authorizeDescription = setupDescription(
-      "Slack will open a permission screen and return here automatically. Access and refresh tokens stay in macOS Keychain."
+      """
+      Slack may default to another signed-in workspace. On the permission screen, use Slack's workspace picker to select the same workspace where you created the app—Quest in this case—before choosing Allow. Slack then returns here automatically.
+      """
     )
     let connectButton = NSButton(
       title: "Connect with Slack",

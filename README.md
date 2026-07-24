@@ -35,8 +35,9 @@ Slack Menubar includes a setup assistant. Open the menu-bar item and choose
    generated token beginning with `xapp-`.
 5. Return to the assistant, enter those two values, and select
    **Connect with Slack**.
-6. Approve the requested access on Slack's website. Slack returns directly to
-   Slack Menubar and the connection starts automatically.
+6. On Slack's permission page, use the workspace picker to select the same
+   workspace where you created the app. Approve the requested access. Slack
+   returns directly to Slack Menubar and the connection starts automatically.
 
 You never need to find or paste a user OAuth token. Slack Menubar uses PKCE,
 stores its rotating access and refresh tokens only in macOS Keychain, and
