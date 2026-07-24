@@ -274,11 +274,13 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     let clientIDField = NSTextField(string: existingCredentials?.clientID ?? "")
     clientIDField.placeholderString = "For example, 123456789.987654321"
-    clientIDField.frame.size = NSSize(width: 420, height: 24)
+    clientIDField.controlSize = .large
+    clientIDField.frame.size = NSSize(width: 460, height: 28)
 
     let appTokenField = NSSecureTextField(string: existingCredentials?.appToken ?? "")
     appTokenField.placeholderString = "xapp-…"
-    appTokenField.frame.size = NSSize(width: 420, height: 24)
+    appTokenField.controlSize = .large
+    appTokenField.frame.size = NSSize(width: 460, height: 28)
 
     let clientIDLabel = NSTextField(labelWithString: "Client ID")
     let appTokenLabel = NSTextField(labelWithString: "App-level token (xapp)")
@@ -293,7 +295,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     stack.alignment = .leading
     stack.spacing = 6
     stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
-    stack.frame = NSRect(x: 0, y: 0, width: 430, height: 102)
+    stack.frame = NSRect(x: 0, y: 0, width: 470, height: 124)
 
     let alert = NSAlert()
     alert.messageText = "Finish creating the Slack app"
@@ -302,12 +304,13 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       The manifest is already on your clipboard.
 
       1. In Slack, choose From a manifest.
-      2. Select YAML, press ⌘V, then choose Next.
-      3. Select your workspace, review the configuration, and choose Create.
-      4. On Basic Information, copy Client ID from App Credentials.
-      5. Under App-Level Tokens, choose Generate Token and Scopes.
-      6. Name it Slack Menubar, add connections:write, and generate it.
-      7. Paste the Client ID and xapp token below.
+      2. Select YAML and press ⌘V.
+      3. Select your workspace underneath the YAML, then choose Next.
+      4. Review the configuration and choose Create.
+      5. On Basic Information, copy Client ID from App Credentials.
+      6. Under App-Level Tokens, choose Generate Token and Scopes.
+      7. Name it Slack Menubar, add connections:write, and generate it.
+      8. Paste the Client ID and xapp token below.
       """
     alert.alertStyle = .informational
     alert.accessoryView = stack
