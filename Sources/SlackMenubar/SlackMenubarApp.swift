@@ -6,23 +6,18 @@ import SlackMenubarCore
 @main
 @MainActor
 final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
-  private let badgeReader = SlackDockBadgeReader()
+  private let apiService = SlackAPIService()
+  private let notificationStore = SlackNotificationStore()
   private let logger = Logger(
     subsystem: "com.michaelbrusegard.SlackMenubar",
-    category: "BadgeMonitor"
+    category: "SlackAPI"
   )
+
   private var statusItem: NSStatusItem!
-  private var pollTimer: Timer?
-  private var currentStatus: SlackBadgeStatus = .slackUnavailable
-  private var lastCheckedAt: Date?
-  private var launchAtLoginError: String?
+  private var connectionState: SlackConnectionState = .unconfigured
+  private var setupError: String?
 
   static func main() {
-    if CommandLine.arguments.contains("--diagnose") {
-      print(SlackDockBadgeReader().diagnosticReport())
-      return
-    }
-
     let application = NSApplication.shared
     let delegate = SlackMenubarApp()
     application.delegate = delegate
@@ -31,59 +26,62 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
-    logger.notice(
-      "Started; Accessibility trusted: \(self.badgeReader.hasAccessibilityPermission)"
-    )
-
     statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    statusItem.button?.toolTip = "Slack notification status"
 
     let menu = NSMenu()
     menu.delegate = self
     statusItem.menu = menu
 
-    observeSlackLifecycle()
-    refresh()
-
-    if !badgeReader.hasAccessibilityPermission {
-      badgeReader.requestAccessibilityPermission()
+    apiService.onStateChange = { [weak self] state in
+      guard let self else {
+        return
+      }
+      connectionState = state
+      logger.notice("Connection state: \(state.menuDescription, privacy: .public)")
+      refreshUI()
+    }
+    apiService.onNotification = { [weak self] notification in
+      guard let self else {
+        return
+      }
+      logger.notice(
+        "Received \(notification.kind.rawValue, privacy: .public)"
+      )
+      notificationStore.add(notification)
+    }
+    notificationStore.onChange = { [weak self] _ in
+      self?.refreshUI()
     }
 
-    pollTimer = Timer.scheduledTimer(
-      timeInterval: 3,
-      target: self,
-      selector: #selector(refreshFromTimer),
-      userInfo: nil,
-      repeats: true
-    )
-    if let pollTimer {
-      RunLoop.main.add(pollTimer, forMode: .common)
-    }
+    refreshUI()
+    loadCredentialsAndConnect()
   }
 
   func applicationWillTerminate(_ notification: Notification) {
-    pollTimer?.invalidate()
-    NSWorkspace.shared.notificationCenter.removeObserver(self)
+    apiService.disconnect()
   }
 
   func menuWillOpen(_ menu: NSMenu) {
-    refresh()
     rebuildMenu(menu)
   }
 
-  @objc private func refreshFromTimer() {
-    refresh()
+  private func loadCredentialsAndConnect() {
+    do {
+      if let credentials = try SlackCredentialStore.load() {
+        apiService.connect(using: credentials)
+      } else {
+        DispatchQueue.main.async { [weak self] in
+          self?.configureSlack()
+        }
+      }
+    } catch {
+      setupError = "Keychain: \(error.localizedDescription)"
+      refreshUI()
+    }
   }
 
-  private func refresh() {
-    let newStatus = badgeReader.read()
-    if newStatus != currentStatus {
-      logger.notice("Status changed to \(newStatus.logDescription, privacy: .public)")
-    }
-    currentStatus = newStatus
-    lastCheckedAt = Date()
+  private func refreshUI() {
     updateStatusItem()
-
     if let menu = statusItem.menu, menu.numberOfItems > 0 {
       rebuildMenu(menu)
     }
@@ -94,63 +92,85 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       return
     }
 
-    let image: NSImage?
-    let accessibilityDescription: String
+    let count = notificationStore.notifications.count
+    let hasNotifications = count > 0
+    button.image = SlackStatusIcon.slackMark(filled: hasNotifications)
+    button.title = hasNotifications ? " \(count)" : ""
 
-    switch currentStatus {
-    case .unread(_, let count):
-      accessibilityDescription =
-        count.map {
-          "Slack has \($0) unread notifications"
-        } ?? "Slack has an unread notification"
-      image = SlackStatusIcon.slackMark(filled: true)
-      button.title = count.map { " \($0)" } ?? ""
-    case .noUnread:
-      accessibilityDescription = "Slack has no unread notifications"
-      image = SlackStatusIcon.slackMark(filled: false)
-      button.title = ""
-    case .slackUnavailable:
-      accessibilityDescription = "Slack is unavailable"
-      image = SlackStatusIcon.systemSymbol(
-        named: "bell.slash",
-        accessibilityDescription: accessibilityDescription
-      )
-      button.title = ""
-    case .accessibilityPermissionRequired:
-      accessibilityDescription = "Slack Menubar needs Accessibility permission"
-      image = SlackStatusIcon.systemSymbol(
-        named: "exclamationmark.triangle",
-        accessibilityDescription: accessibilityDescription
-      )
-      button.title = ""
-    }
-
-    button.image = image
-    button.setAccessibilityLabel(accessibilityDescription)
-    button.toolTip = accessibilityDescription
+    let description =
+      hasNotifications
+      ? "Slack has \(count) pending \(count == 1 ? "notification" : "notifications")"
+      : "Slack has no pending notifications"
+    button.setAccessibilityLabel(description)
+    button.toolTip = description
   }
 
   private func rebuildMenu(_ menu: NSMenu) {
     menu.removeAllItems()
 
-    let status = NSMenuItem(title: statusDescription, action: nil, keyEquivalent: "")
-    status.isEnabled = false
-    menu.addItem(status)
+    let connection = NSMenuItem(
+      title: connectionState.menuDescription,
+      action: nil,
+      keyEquivalent: ""
+    )
+    connection.isEnabled = false
+    menu.addItem(connection)
 
-    if let lastCheckedAt {
-      let checked = NSMenuItem(
-        title: "Checked \(lastCheckedAt.formatted(date: .omitted, time: .standard))",
+    if let setupError {
+      let error = NSMenuItem(title: setupError, action: nil, keyEquivalent: "")
+      error.isEnabled = false
+      menu.addItem(error)
+    }
+
+    if notificationStore.notifications.isEmpty {
+      let empty = NSMenuItem(
+        title: "No pending DMs or mentions",
         action: nil,
         keyEquivalent: ""
       )
-      checked.isEnabled = false
-      menu.addItem(checked)
-    }
+      empty.isEnabled = false
+      menu.addItem(empty)
+    } else {
+      menu.addItem(.separator())
+      let heading = NSMenuItem(
+        title: "Notifications",
+        action: nil,
+        keyEquivalent: ""
+      )
+      heading.isEnabled = false
+      menu.addItem(heading)
 
-    if let launchAtLoginError {
-      let error = NSMenuItem(title: launchAtLoginError, action: nil, keyEquivalent: "")
-      error.isEnabled = false
-      menu.addItem(error)
+      for notification in notificationStore.notifications.prefix(20) {
+        let item = NSMenuItem(
+          title: notificationTitle(notification),
+          action: #selector(openNotification(_:)),
+          keyEquivalent: ""
+        )
+        item.target = self
+        item.representedObject = notification.id
+        item.toolTip = notification.receivedAt.formatted(
+          date: .abbreviated,
+          time: .shortened
+        )
+        menu.addItem(item)
+      }
+
+      if notificationStore.notifications.count > 20 {
+        let remaining = notificationStore.notifications.count - 20
+        let more = NSMenuItem(
+          title: "…and \(remaining) more",
+          action: nil,
+          keyEquivalent: ""
+        )
+        more.isEnabled = false
+        menu.addItem(more)
+      }
+
+      menu.addItem(
+        withTitle: "Clear All Notifications",
+        action: #selector(clearNotifications),
+        keyEquivalent: ""
+      ).target = self
     }
 
     menu.addItem(.separator())
@@ -160,23 +180,30 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       keyEquivalent: ""
     ).target = self
     menu.addItem(
-      withTitle: "Check Now",
-      action: #selector(checkNow),
+      withTitle: "Configure Slack API…",
+      action: #selector(configureSlack),
+      keyEquivalent: ""
+    ).target = self
+    menu.addItem(
+      withTitle: "Reconnect",
+      action: #selector(reconnect),
       keyEquivalent: "r"
     ).target = self
-
-    if currentStatus == .accessibilityPermissionRequired {
-      menu.addItem(
-        withTitle: "Grant Accessibility Permission…",
-        action: #selector(requestAccessibilityPermission),
-        keyEquivalent: ""
-      ).target = self
-      menu.addItem(
-        withTitle: "Open Accessibility Settings…",
-        action: #selector(openAccessibilitySettings),
-        keyEquivalent: ""
-      ).target = self
-    }
+    menu.addItem(
+      withTitle: "Create or Manage Slack App…",
+      action: #selector(openSlackAppManagement),
+      keyEquivalent: ""
+    ).target = self
+    menu.addItem(
+      withTitle: "Copy Slack App Manifest",
+      action: #selector(copySlackAppManifest),
+      keyEquivalent: ""
+    ).target = self
+    menu.addItem(
+      withTitle: "Remove Slack Credentials…",
+      action: #selector(removeCredentials),
+      keyEquivalent: ""
+    ).target = self
 
     let launchAtLogin = NSMenuItem(
       title: "Launch at Login",
@@ -195,73 +222,188 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     ).target = self
   }
 
-  private var statusDescription: String {
-    switch currentStatus {
-    case .unread(let label, let count):
-      if let count {
-        return count == 1
-          ? "Slack: 1 unread notification"
-          : "Slack: \(count) unread notifications"
-      }
-      return "Slack: unread (\(label))"
-    case .noUnread:
-      return "Slack: no unread notifications"
-    case .slackUnavailable:
-      return "Slack: not running or absent from the Dock"
-    case .accessibilityPermissionRequired:
-      return "Accessibility permission required"
+  private func notificationTitle(_ notification: SlackMenuNotification) -> String {
+    switch notification.kind {
+    case .directMessage:
+      return "\(notification.senderName) — direct message"
+    case .mention:
+      return "\(notification.senderName) mentioned you in \(notification.conversationName)"
     }
   }
 
-  private func observeSlackLifecycle() {
-    let center = NSWorkspace.shared.notificationCenter
-    center.addObserver(
-      self,
-      selector: #selector(workspaceApplicationChanged),
-      name: NSWorkspace.didLaunchApplicationNotification,
-      object: nil
-    )
-    center.addObserver(
-      self,
-      selector: #selector(workspaceApplicationChanged),
-      name: NSWorkspace.didTerminateApplicationNotification,
-      object: nil
-    )
-  }
+  @objc private func configureSlack() {
+    let existingCredentials = try? SlackCredentialStore.load()
 
-  @objc private func workspaceApplicationChanged(_ notification: Notification) {
-    refresh()
-  }
+    let appTokenField = NSSecureTextField(string: existingCredentials?.appToken ?? "")
+    appTokenField.placeholderString = "xapp-…"
+    appTokenField.frame.size = NSSize(width: 390, height: 24)
 
-  @objc private func openSlack() {
-    guard let url = URL(string: "slack://open") else {
+    let userTokenField = NSSecureTextField(string: existingCredentials?.userToken ?? "")
+    userTokenField.placeholderString = "xoxp-…"
+    userTokenField.frame.size = NSSize(width: 390, height: 24)
+
+    let appTokenLabel = NSTextField(labelWithString: "App-level token (xapp)")
+    let userTokenLabel = NSTextField(labelWithString: "User OAuth token (xoxp)")
+
+    let stack = NSStackView(views: [
+      appTokenLabel,
+      appTokenField,
+      userTokenLabel,
+      userTokenField,
+    ])
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 6
+    stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+    stack.frame = NSRect(x: 0, y: 0, width: 400, height: 104)
+
+    let alert = NSAlert()
+    alert.messageText = "Connect Slack Menubar"
+    alert.informativeText =
+      "Paste the tokens from the private Slack app created with SlackAppManifest.yaml. They are stored only in macOS Keychain."
+    alert.alertStyle = .informational
+    alert.accessoryView = stack
+    alert.addButton(withTitle: "Save & Connect")
+    alert.addButton(withTitle: "Cancel")
+    alert.addButton(withTitle: "Copy App Manifest")
+
+    NSApplication.shared.activate(ignoringOtherApps: true)
+    let response = alert.runModal()
+    if response == .alertThirdButtonReturn {
+      copySlackAppManifest()
+      configureSlack()
       return
     }
-    NSWorkspace.shared.open(url)
-  }
+    guard response == .alertFirstButtonReturn else {
+      return
+    }
 
-  @objc private func checkNow() {
-    refresh()
-  }
-
-  @objc private func requestAccessibilityPermission() {
-    badgeReader.requestAccessibilityPermission()
-    refresh()
-  }
-
-  @objc private func openAccessibilitySettings() {
-    guard
-      let url = URL(
-        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+    let credentials = SlackCredentials(
+      appToken: appTokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
+      userToken: userTokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    )
+    guard credentials.isPlausible else {
+      showError(
+        title: "Invalid Slack tokens",
+        message: "The app token must begin with xapp- and the user token with xoxp-."
       )
+      return
+    }
+
+    do {
+      try SlackCredentialStore.save(credentials)
+      setupError = nil
+      apiService.connect(using: credentials)
+    } catch {
+      setupError = "Keychain: \(error.localizedDescription)"
+      showError(title: "Could not save Slack tokens", message: error.localizedDescription)
+    }
+    refreshUI()
+  }
+
+  @objc private func reconnect() {
+    do {
+      guard let credentials = try SlackCredentialStore.load() else {
+        configureSlack()
+        return
+      }
+      setupError = nil
+      apiService.connect(using: credentials)
+    } catch {
+      setupError = "Keychain: \(error.localizedDescription)"
+      refreshUI()
+    }
+  }
+
+  @objc private func removeCredentials() {
+    let alert = NSAlert()
+    alert.messageText = "Remove Slack API credentials?"
+    alert.informativeText =
+      "Slack Menubar will disconnect and clear its pending notifications."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Remove")
+    alert.addButton(withTitle: "Cancel")
+
+    NSApplication.shared.activate(ignoringOtherApps: true)
+    guard alert.runModal() == .alertFirstButtonReturn else {
+      return
+    }
+
+    do {
+      try SlackCredentialStore.remove()
+      apiService.disconnect()
+      notificationStore.clear()
+      connectionState = .unconfigured
+      setupError = nil
+    } catch {
+      setupError = "Keychain: \(error.localizedDescription)"
+    }
+    refreshUI()
+  }
+
+  @objc private func openNotification(_ sender: NSMenuItem) {
+    guard
+      let notificationID = sender.representedObject as? String,
+      let notification = notificationStore.notifications.first(where: {
+        $0.id == notificationID
+      })
     else {
       return
     }
-    NSWorkspace.shared.open(url)
+
+    var components = URLComponents()
+    components.scheme = "slack"
+    components.host = "channel"
+    components.queryItems = [
+      URLQueryItem(name: "team", value: notification.teamID),
+      URLQueryItem(name: "id", value: notification.channelID),
+      URLQueryItem(name: "message", value: notification.messageTimestamp),
+    ]
+    if let url = components.url {
+      NSWorkspace.shared.open(url)
+    }
+    notificationStore.remove(id: notificationID)
+  }
+
+  @objc private func clearNotifications() {
+    notificationStore.clear()
+  }
+
+  @objc private func openSlack() {
+    if let url = URL(string: "slack://open") {
+      NSWorkspace.shared.open(url)
+    }
+  }
+
+  @objc private func openSlackAppManagement() {
+    if let url = URL(string: "https://api.slack.com/apps") {
+      NSWorkspace.shared.open(url)
+    }
+  }
+
+  @objc private func copySlackAppManifest() {
+    guard
+      let url = Bundle.main.url(
+        forResource: "SlackAppManifest",
+        withExtension: "yaml"
+      ),
+      let manifest = try? String(contentsOf: url, encoding: .utf8)
+    else {
+      showError(
+        title: "Manifest unavailable",
+        message:
+          "Build the app bundle with make app or copy SlackAppManifest.yaml from the repository."
+      )
+      return
+    }
+
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(manifest, forType: .string)
   }
 
   @objc private func toggleLaunchAtLogin() {
-    launchAtLoginError = nil
+    setupError = nil
     do {
       if SMAppService.mainApp.status == .enabled {
         try SMAppService.mainApp.unregister()
@@ -269,12 +411,19 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         try SMAppService.mainApp.register()
       }
     } catch {
-      launchAtLoginError = "Launch at Login: \(error.localizedDescription)"
+      setupError = "Launch at Login: \(error.localizedDescription)"
     }
+    refreshUI()
+  }
 
-    if let menu = statusItem.menu {
-      rebuildMenu(menu)
-    }
+  private func showError(title: String, message: String) {
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.informativeText = message
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "OK")
+    NSApplication.shared.activate(ignoringOtherApps: true)
+    alert.runModal()
   }
 
   @objc private func quit() {

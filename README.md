@@ -1,31 +1,69 @@
 # Slack Menubar
 
-A small, native macOS menu-bar utility that shows whether Slack has an unread
-notification.
+A native macOS menu-bar utility that keeps direct messages and personal Slack
+mentions visible until you acknowledge them.
 
-Slack Menubar reads the accessibility label on Slack's Dock badge. It does not
-need a Slack token, send data anywhere, or inspect message contents.
+Slack Menubar connects directly to Slack using a private Slack app and Socket
+Mode. It does not rely on Slack's unreliable macOS Dock badge and does not need
+a hosted server.
 
-## Status icons
+## Behavior
 
-- Filled four-color Slack-style mark: Slack has at least one unread notification
-- Outlined monochrome Slack-style mark: Slack has no unread notifications
-- `bell.slash`: Slack is not running and does not have a visible Dock item
-- `exclamationmark.triangle`: Accessibility permission is required
+- A filled four-color Slack-style mark means notifications are pending.
+- An outlined monochrome mark means the notification list is clear.
+- The pending count appears beside the icon.
+- The menu identifies the sender and whether the event was a DM or mention.
+- Selecting an item opens its Slack conversation and removes the item.
+- **Clear All Notifications** acknowledges everything without opening Slack.
 
-When macOS exposes a numeric badge value, it is displayed beside the menu-bar
-icon. The unread mark deliberately opts out of the standard macOS template
-tint so its notification colors remain visible in both light and dark menu
-bars.
+Pending items persist across app restarts. Slack auto-marking a visible
+conversation as read does not remove them.
 
-## Requirements
+## Slack app setup
 
-- macOS 13 or newer
-- Slack's Dock badge enabled in Slack's notification preferences
-- Accessibility permission for Slack Menubar
-- Xcode Command Line Tools to build from source
+Slack Menubar needs one private Slack app for your workspace:
+
+1. Open [Slack app management](https://api.slack.com/apps).
+2. Select **Create New App → From an app manifest**.
+3. Choose your workspace, select **YAML**, and paste the contents of
+   [`SlackAppManifest.yaml`](SlackAppManifest.yaml).
+4. Create the app.
+5. Under **Basic Information → App-Level Tokens**, select **Generate Token and
+   Scopes**. Name it `Slack Menubar`, add `connections:write`, generate it, and
+   copy the token beginning with `xapp-`.
+6. Under **OAuth & Permissions**, select **Install to Workspace** (or
+   **Reinstall to Workspace**) and approve the requested user permissions.
+7. On the same page, copy the **User OAuth Token** beginning with `xoxp-`.
+8. Open Slack Menubar's menu, choose **Configure Slack API…**, and paste both
+   tokens.
+
+The tokens are stored only in macOS Keychain. They are never written to the
+repository, UserDefaults, or logs.
+
+Your workspace may require an administrator to approve the app installation.
+
+## Permissions and privacy
+
+Slack requires message-history scopes to deliver user-level message events.
+The manifest requests access to public channels, private channels, DMs, and
+group DMs that the authorizing user can already access, plus basic user names.
+
+Slack Menubar filters the live event stream to:
+
+- Messages in one-to-one DMs.
+- Channel, private-channel, and group-DM messages containing a direct mention
+  of your Slack user ID.
+
+Message bodies are inspected in memory only for mention matching. The app
+stores sender name, conversation name, message timestamp, and Slack IDs for
+pending notifications; it does not persist message text.
 
 ## Build and install
+
+Requirements:
+
+- macOS 13 or newer
+- Xcode Command Line Tools
 
 ```sh
 make test
@@ -35,15 +73,10 @@ make install
 `make install` builds a signed application, installs it at
 `~/Applications/Slack Menubar.app`, and opens it.
 
-When an Apple Development signing identity is available, the build uses it so
-macOS can preserve Accessibility permission across rebuilds. Otherwise, it
-falls back to ad-hoc signing and may require permission again after rebuilding.
+When an Apple Development signing identity is available, the build uses it.
+Otherwise, it falls back to ad-hoc signing.
 
-On first launch, allow Slack Menubar in **System Settings → Privacy & Security
-→ Accessibility**. If it was already open when permission was granted, choose
-**Check Now** from its menu.
-
-You can also build without installing:
+You can build without installing:
 
 ```sh
 make app
@@ -54,39 +87,13 @@ Open `Package.swift` in Xcode for development.
 
 ## Launch at login
 
-Choose **Launch at Login** from the app's menu. macOS manages the login item,
-and it can also be reviewed under **System Settings → General → Login Items &
-Extensions**.
+Choose **Launch at Login** from the app menu. Keeping the app running matters:
+Socket Mode delivers live events and the app does not currently backfill events
+missed while it was offline.
 
-## How it works
+## Current notification coverage
 
-Every three seconds, the app:
-
-1. Uses the macOS Accessibility API to locate Slack's item in the Dock.
-2. Reads its `AXStatusLabel`.
-3. Maps an empty label to no unread notifications and any non-empty label to
-   unread notifications.
-
-The polling happens locally and only traverses the Dock accessibility tree.
-Message text, workspace information, and account credentials are never read.
-
-## Limitations
-
-- Slack must be running or otherwise visible in the Dock.
-- Slack's own badge setting is the source of truth. Muted conversations or
-  Slack notification preferences can affect whether the badge appears.
-- Rebuilding or moving an ad-hoc-signed app can cause macOS to request
-  Accessibility permission again.
-
-## Troubleshooting
-
-If Slack shows a desktop banner but Slack Menubar remains outlined, verify
-**Slack → Preferences → Notifications → Sound & appearance → Show a badge on
-Slack's icon to indicate new activity**. A banner alone does not provide a
-badge for Slack Menubar to read.
-
-To inspect the signal macOS currently exposes:
-
-```sh
-"$HOME/Applications/Slack Menubar.app/Contents/MacOS/SlackMenubar" --diagnose
-```
+Slack Menubar intentionally does not notify for every channel message. It also
+does not yet reproduce Slack's keyword notifications, followed-thread replies,
+user-group mentions, `@here`, or `@channel`. These can be added later, but they
+require more preference and membership data to match Slack's behavior.

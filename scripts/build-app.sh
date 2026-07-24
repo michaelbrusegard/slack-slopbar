@@ -21,8 +21,10 @@ binary_directory=$(swift build --configuration "$configuration" --show-bin-path)
 
 rm -rf "$app_directory"
 mkdir -p "$contents_directory/MacOS"
+mkdir -p "$contents_directory/Resources"
 cp "$binary_directory/SlackMenubar" "$contents_directory/MacOS/SlackMenubar"
 cp "$project_directory/Packaging/Info.plist" "$contents_directory/Info.plist"
+cp "$project_directory/SlackAppManifest.yaml" "$contents_directory/Resources/SlackAppManifest.yaml"
 
 codesign_identity=${CODESIGN_IDENTITY:-}
 if [ -z "$codesign_identity" ]; then
@@ -40,7 +42,7 @@ codesign \
     "$app_directory"
 
 if [ "$codesign_identity" = "-" ]; then
-    echo "Signed ad hoc; Accessibility permission may reset after rebuilding." >&2
+    echo "Signed ad hoc; Keychain access may reset after rebuilding." >&2
 else
     echo "Signed with stable identity $codesign_identity"
 fi
