@@ -274,21 +274,17 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     let clientIDField = NSTextField(string: existingCredentials?.clientID ?? "")
     clientIDField.placeholderString = "For example, 123456789.987654321"
-    clientIDField.controlSize = .large
-    clientIDField.font = .systemFont(ofSize: 14)
+    clientIDField.controlSize = .regular
     clientIDField.translatesAutoresizingMaskIntoConstraints = false
 
     let appTokenField = NSSecureTextField(string: existingCredentials?.appToken ?? "")
     appTokenField.placeholderString = "xapp-…"
-    appTokenField.controlSize = .large
-    appTokenField.font = .systemFont(ofSize: 14)
+    appTokenField.controlSize = .regular
     appTokenField.translatesAutoresizingMaskIntoConstraints = false
 
     NSLayoutConstraint.activate([
       clientIDField.widthAnchor.constraint(equalToConstant: 420),
-      clientIDField.heightAnchor.constraint(equalToConstant: 32),
       appTokenField.widthAnchor.constraint(equalToConstant: 420),
-      appTokenField.heightAnchor.constraint(equalToConstant: 32),
     ])
 
     let clientIDLabel = NSTextField(labelWithString: "Client ID")
@@ -304,7 +300,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     stack.alignment = .leading
     stack.spacing = 6
     stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
-    stack.frame = NSRect(x: 0, y: 0, width: 430, height: 136)
+    stack.frame = NSRect(x: 0, y: 0, width: 430, height: 112)
 
     let alert = NSAlert()
     alert.messageText = "Finish creating the Slack app"
