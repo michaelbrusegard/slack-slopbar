@@ -21,24 +21,25 @@ conversation as read does not remove them.
 
 ## Slack app setup
 
-Slack Menubar needs one private Slack app for your workspace:
+Slack Menubar includes a setup assistant. Open the menu-bar item and choose
+**Slack Setup Assistant…**:
 
-1. Open [Slack app management](https://api.slack.com/apps).
-2. Select **Create New App → From an app manifest**.
-3. Choose your workspace, select **YAML**, and paste the contents of
-   [`SlackAppManifest.yaml`](SlackAppManifest.yaml).
-4. Create the app.
-5. Under **Basic Information → App-Level Tokens**, select **Generate Token and
-   Scopes**. Name it `Slack Menubar`, add `connections:write`, generate it, and
-   copy the token beginning with `xapp-`.
-6. Under **OAuth & Permissions**, select **Install to Workspace** (or
-   **Reinstall to Workspace**) and approve the requested user permissions.
-7. On the same page, copy the **User OAuth Token** beginning with `xoxp-`.
-8. Open Slack Menubar's menu, choose **Configure Slack API…**, and paste both
-   tokens.
+1. Select **Create Slack App**. The assistant opens Slack's app-creation page
+   with the ready-made configuration already filled in.
+2. Choose your workspace, review the configuration, and create the app.
+3. Under **Basic Information → App Credentials**, copy the **Client ID**.
+4. On the same page under **App-Level Tokens**, select **Generate Token and
+   Scopes**. Name it `Slack Menubar`, add `connections:write`, and copy the
+   generated token beginning with `xapp-`.
+5. Return to the assistant, enter those two values, and select
+   **Connect with Slack**.
+6. Approve the requested access on Slack's website. Slack returns directly to
+   Slack Menubar and the connection starts automatically.
 
-The tokens are stored only in macOS Keychain. They are never written to the
-repository, UserDefaults, or logs.
+You never need to find or paste a user OAuth token. Slack Menubar uses PKCE,
+stores its rotating access and refresh tokens only in macOS Keychain, and
+refreshes them automatically. Tokens are never written to the repository,
+UserDefaults, or logs.
 
 Your workspace may require an administrator to approve the app installation.
 

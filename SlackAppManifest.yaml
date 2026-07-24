@@ -3,6 +3,9 @@ display_information:
   description: Personal macOS menu-bar notifications for Slack DMs and mentions
   background_color: "#4A154B"
 oauth_config:
+  pkce_enabled: true
+  redirect_urls:
+    - slackmenubar://oauth
   scopes:
     user:
       - channels:history
@@ -23,5 +26,4 @@ settings:
       - message.mpim
   org_deploy_enabled: false
   socket_mode_enabled: true
-  token_rotation_enabled: false
-
+  token_rotation_enabled: true

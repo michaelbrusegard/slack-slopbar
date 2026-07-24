@@ -41,6 +41,7 @@ final class SlackAPIService {
   private var credentials: SlackCredentials?
   private var identity: SlackIdentity?
   private var connectionTask: Task<Void, Never>?
+  private var refreshTask: Task<SlackCredentials, any Error>?
   private var socket: URLSessionWebSocketTask?
   private var userNameCache: [String: String] = [:]
   private var conversationNameCache: [String: String] = [:]
@@ -63,6 +64,8 @@ final class SlackAPIService {
   private func disconnect(setState: Bool) {
     connectionTask?.cancel()
     connectionTask = nil
+    refreshTask?.cancel()
+    refreshTask = nil
     socket?.cancel(with: .goingAway, reason: nil)
     socket = nil
     if setState {
@@ -75,10 +78,7 @@ final class SlackAPIService {
 
     while !Task.isCancelled {
       do {
-        guard let credentials else {
-          state = .unconfigured
-          return
-        }
+        let credentials = try await currentCredentials()
 
         let identity: SlackIdentity
         if let existingIdentity = self.identity {
@@ -169,10 +169,14 @@ final class SlackAPIService {
       return
     }
 
+    guard let userToken = try? await currentCredentials().userToken else {
+      return
+    }
+
     let senderName: String
     if let userID = event.user {
       senderName =
-        (try? await resolveUserName(userID, token: identity.userToken))
+        (try? await resolveUserName(userID, token: userToken))
         ?? userID
     } else {
       senderName = "Slack app"
@@ -185,7 +189,7 @@ final class SlackAPIService {
       let resolved =
         try? await resolveConversationName(
           event.channel,
-          token: identity.userToken
+          token: userToken
         )
       conversationName = resolved.map { "#\($0)" } ?? event.channel
     }
@@ -237,9 +241,33 @@ final class SlackAPIService {
     }
     return SlackIdentity(
       userID: userID,
-      workspaceName: response.team ?? "Slack",
-      userToken: userToken
+      workspaceName: response.team ?? "Slack"
     )
+  }
+
+  private func currentCredentials() async throws -> SlackCredentials {
+    guard let credentials else {
+      throw SlackAPIError.notConfigured
+    }
+    guard credentials.shouldRefresh else {
+      return credentials
+    }
+
+    if let refreshTask {
+      return try await refreshTask.value
+    }
+
+    let task = Task<SlackCredentials, any Error> {
+      try await SlackOAuthClient.refresh(credentials)
+    }
+    refreshTask = task
+    defer {
+      refreshTask = nil
+    }
+    let refreshed = try await task.value
+    try SlackCredentialStore.save(refreshed)
+    self.credentials = refreshed
+    return refreshed
   }
 
   private func openSocketURL(appToken: String) async throws -> URL {
@@ -346,7 +374,6 @@ final class SlackAPIService {
 private struct SlackIdentity {
   let userID: String
   let workspaceName: String
-  let userToken: String
 }
 
 private struct SocketAcknowledgement: Encodable {
@@ -421,6 +448,7 @@ private enum SlackAPIError: LocalizedError {
   case http(Int)
   case invalidResponse
   case invalidURL
+  case notConfigured
   case socketRefreshRequested
 
   var errorDescription: String? {
@@ -435,6 +463,8 @@ private enum SlackAPIError: LocalizedError {
       return "Slack returned an invalid response"
     case .invalidURL:
       return "Could not construct the Slack API URL"
+    case .notConfigured:
+      return "Slack API setup is required"
     case .socketRefreshRequested:
       return "Slack requested a connection refresh"
     }

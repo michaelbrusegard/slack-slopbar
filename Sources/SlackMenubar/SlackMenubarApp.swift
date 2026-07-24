@@ -16,6 +16,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var statusItem: NSStatusItem!
   private var connectionState: SlackConnectionState = .unconfigured
   private var setupError: String?
+  private var pendingOAuthRequest: SlackOAuthRequest?
 
   static func main() {
     let application = NSApplication.shared
@@ -59,6 +60,15 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   func applicationWillTerminate(_ notification: Notification) {
     apiService.disconnect()
+  }
+
+  func application(_ application: NSApplication, open urls: [URL]) {
+    guard let callbackURL = urls.first(where: {
+      $0.scheme == "slackmenubar" && $0.host == "oauth"
+    }) else {
+      return
+    }
+    finishSlackAuthorization(callbackURL)
   }
 
   func menuWillOpen(_ menu: NSMenu) {
@@ -180,7 +190,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       keyEquivalent: ""
     ).target = self
     menu.addItem(
-      withTitle: "Configure Slack API…",
+      withTitle: "Slack Setup Assistant…",
       action: #selector(configureSlack),
       keyEquivalent: ""
     ).target = self
@@ -232,45 +242,83 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   @objc private func configureSlack() {
+    let alert = NSAlert()
+    alert.messageText = "Set up Slack Menubar"
+    alert.informativeText =
+      """
+      Slack Menubar uses a private Slack app in your workspace.
+
+      1. Create the app from the ready-made configuration.
+      2. Copy its Client ID and generate one Socket Mode app token.
+      3. Approve access in Slack. The user token is handled automatically.
+      """
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: "Create Slack App")
+    alert.addButton(withTitle: "Enter App Details")
+    alert.addButton(withTitle: "Cancel")
+
+    NSApplication.shared.activate(ignoringOtherApps: true)
+    switch alert.runModal() {
+    case .alertFirstButtonReturn:
+      openPrefilledSlackAppCreation()
+      showAppDetailsForm()
+    case .alertSecondButtonReturn:
+      showAppDetailsForm()
+    default:
+      return
+    }
+  }
+
+  private func showAppDetailsForm() {
     let existingCredentials = try? SlackCredentialStore.load()
+
+    let clientIDField = NSTextField(string: existingCredentials?.clientID ?? "")
+    clientIDField.placeholderString = "For example, 123456789.987654321"
+    clientIDField.frame.size = NSSize(width: 420, height: 24)
 
     let appTokenField = NSSecureTextField(string: existingCredentials?.appToken ?? "")
     appTokenField.placeholderString = "xapp-…"
-    appTokenField.frame.size = NSSize(width: 390, height: 24)
+    appTokenField.frame.size = NSSize(width: 420, height: 24)
 
-    let userTokenField = NSSecureTextField(string: existingCredentials?.userToken ?? "")
-    userTokenField.placeholderString = "xoxp-…"
-    userTokenField.frame.size = NSSize(width: 390, height: 24)
-
-    let appTokenLabel = NSTextField(labelWithString: "App-level token (xapp)")
-    let userTokenLabel = NSTextField(labelWithString: "User OAuth token (xoxp)")
+    let clientIDLabel = NSTextField(
+      labelWithString: "Client ID — Basic Information → App Credentials"
+    )
+    let appTokenLabel = NSTextField(
+      labelWithString: "App token — Basic Information → App-Level Tokens"
+    )
+    let hint = NSTextField(
+      wrappingLabelWithString:
+        "Generate the app token with the connections:write scope. You will approve the user permissions on Slack's website next."
+    )
+    hint.textColor = .secondaryLabelColor
+    hint.frame.size = NSSize(width: 420, height: 38)
 
     let stack = NSStackView(views: [
+      clientIDLabel,
+      clientIDField,
       appTokenLabel,
       appTokenField,
-      userTokenLabel,
-      userTokenField,
+      hint,
     ])
     stack.orientation = .vertical
     stack.alignment = .leading
     stack.spacing = 6
     stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
-    stack.frame = NSRect(x: 0, y: 0, width: 400, height: 104)
+    stack.frame = NSRect(x: 0, y: 0, width: 430, height: 124)
 
     let alert = NSAlert()
-    alert.messageText = "Connect Slack Menubar"
+    alert.messageText = "Enter the two app details"
     alert.informativeText =
-      "Paste the tokens from the private Slack app created with SlackAppManifest.yaml. They are stored only in macOS Keychain."
+      "The Client ID is not secret. The app token is stored only in macOS Keychain."
     alert.alertStyle = .informational
     alert.accessoryView = stack
-    alert.addButton(withTitle: "Save & Connect")
+    alert.addButton(withTitle: "Connect with Slack")
+    alert.addButton(withTitle: "Back")
     alert.addButton(withTitle: "Cancel")
-    alert.addButton(withTitle: "Copy App Manifest")
 
     NSApplication.shared.activate(ignoringOtherApps: true)
     let response = alert.runModal()
-    if response == .alertThirdButtonReturn {
-      copySlackAppManifest()
+    if response == .alertSecondButtonReturn {
       configureSlack()
       return
     }
@@ -278,27 +326,108 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       return
     }
 
-    let credentials = SlackCredentials(
-      appToken: appTokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
-      userToken: userTokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let clientID = clientIDField.stringValue.trimmingCharacters(
+      in: .whitespacesAndNewlines
     )
-    guard credentials.isPlausible else {
+    let appToken = appTokenField.stringValue.trimmingCharacters(
+      in: .whitespacesAndNewlines
+    )
+    guard !clientID.isEmpty, appToken.hasPrefix("xapp-") else {
       showError(
-        title: "Invalid Slack tokens",
-        message: "The app token must begin with xapp- and the user token with xoxp-."
+        title: "Check the app details",
+        message: "Enter the Client ID and an app token beginning with xapp-."
+      )
+      showAppDetailsForm()
+      return
+    }
+
+    let oauthRequest = SlackOAuthRequest(clientID: clientID, appToken: appToken)
+    guard let authorizationURL = oauthRequest.authorizationURL else {
+      showError(
+        title: "Could not start Slack authorization",
+        message: "Slack Menubar could not construct the authorization URL."
+      )
+      return
+    }
+    pendingOAuthRequest = oauthRequest
+    setupError = nil
+    NSWorkspace.shared.open(authorizationURL)
+  }
+
+  private func finishSlackAuthorization(_ callbackURL: URL) {
+    guard let oauthRequest = pendingOAuthRequest else {
+      showError(
+        title: "Authorization expired",
+        message: "Open Slack Setup Assistant and try connecting again."
       )
       return
     }
 
-    do {
-      try SlackCredentialStore.save(credentials)
-      setupError = nil
-      apiService.connect(using: credentials)
-    } catch {
-      setupError = "Keychain: \(error.localizedDescription)"
-      showError(title: "Could not save Slack tokens", message: error.localizedDescription)
+    let queryItems = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?
+      .queryItems
+    var values: [String: String] = [:]
+    for item in queryItems ?? [] {
+      values[item.name] = item.value
     }
-    refreshUI()
+    guard values["state"] == oauthRequest.state else {
+      pendingOAuthRequest = nil
+      showError(
+        title: "Could not verify Slack authorization",
+        message: "The OAuth state did not match. Please try again."
+      )
+      return
+    }
+    if let slackError = values["error"] {
+      pendingOAuthRequest = nil
+      showError(
+        title: "Slack authorization was not completed",
+        message: slackError
+      )
+      return
+    }
+    guard let code = values["code"] else {
+      pendingOAuthRequest = nil
+      showError(
+        title: "Slack did not return an authorization code",
+        message: "Open Slack Setup Assistant and try again."
+      )
+      return
+    }
+
+    pendingOAuthRequest = nil
+    Task {
+      do {
+        let credentials = try await SlackOAuthClient.exchange(
+          code: code,
+          request: oauthRequest
+        )
+        guard credentials.isPlausible else {
+          throw SlackSetupError.invalidToken
+        }
+        try SlackCredentialStore.save(credentials)
+        setupError = nil
+        apiService.connect(using: credentials)
+        showAuthorizationComplete()
+      } catch {
+        setupError = "Slack setup: \(error.localizedDescription)"
+        refreshUI()
+        showError(
+          title: "Could not finish Slack authorization",
+          message: error.localizedDescription
+        )
+      }
+    }
+  }
+
+  private func showAuthorizationComplete() {
+    let alert = NSAlert()
+    alert.messageText = "Slack authorization is complete"
+    alert.informativeText =
+      "Slack Menubar is connecting now. The menu will show the workspace name once it is ready."
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: "Done")
+    NSApplication.shared.activate(ignoringOtherApps: true)
+    alert.runModal()
   }
 
   @objc private func reconnect() {
@@ -382,13 +511,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   @objc private func copySlackAppManifest() {
-    guard
-      let url = Bundle.main.url(
-        forResource: "SlackAppManifest",
-        withExtension: "yaml"
-      ),
-      let manifest = try? String(contentsOf: url, encoding: .utf8)
-    else {
+    guard let manifest = bundledSlackAppManifest() else {
       showError(
         title: "Manifest unavailable",
         message:
@@ -400,6 +523,42 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
     pasteboard.setString(manifest, forType: .string)
+  }
+
+  private func openPrefilledSlackAppCreation() {
+    guard let manifest = bundledSlackAppManifest() else {
+      showError(
+        title: "Manifest unavailable",
+        message: "Slack Menubar could not load its bundled app configuration."
+      )
+      return
+    }
+
+    var components = URLComponents(string: "https://api.slack.com/apps")
+    components?.queryItems = [
+      URLQueryItem(name: "new_app", value: "1"),
+      URLQueryItem(name: "manifest_yaml", value: manifest),
+    ]
+    guard let url = components?.url else {
+      showError(
+        title: "Could not open Slack app creation",
+        message: "Use Copy Slack App Manifest from the menu as a fallback."
+      )
+      return
+    }
+    NSWorkspace.shared.open(url)
+  }
+
+  private func bundledSlackAppManifest() -> String? {
+    guard
+      let url = Bundle.main.url(
+        forResource: "SlackAppManifest",
+        withExtension: "yaml"
+      )
+    else {
+      return nil
+    }
+    return try? String(contentsOf: url, encoding: .utf8)
   }
 
   @objc private func toggleLaunchAtLogin() {
@@ -428,5 +587,13 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   @objc private func quit() {
     NSApplication.shared.terminate(nil)
+  }
+}
+
+private enum SlackSetupError: LocalizedError {
+  case invalidToken
+
+  var errorDescription: String? {
+    "Slack returned an unexpected user token."
   }
 }
