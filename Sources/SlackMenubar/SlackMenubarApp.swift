@@ -17,7 +17,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var connectionState: SlackConnectionState = .unconfigured
   private var setupError: String?
   private var pendingOAuthRequest: SlackOAuthRequest?
-  private var setupAlert: NSAlert?
+  private var setupWindow: NSWindow?
   private var setupClientIDField: NSTextField?
   private var setupAppTokenField: NSSecureTextField?
 
@@ -293,35 +293,12 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   @objc private func configureSlack() {
-    let alert = NSAlert()
-    alert.messageText = "Set up Slack Menubar"
-    alert.informativeText =
-      """
-      Slack Menubar uses a private Slack app in your workspace.
-
-      1. Create the app from the manifest copied for you.
-      2. Copy its Client ID and generate one Socket Mode app token.
-      3. Approve access in Slack. The user token is handled automatically.
-      """
-    alert.alertStyle = .informational
-    alert.addButton(withTitle: "Create Slack App")
-    alert.addButton(withTitle: "Enter App Details")
-    alert.addButton(withTitle: "Cancel")
-
-    NSApplication.shared.activate(ignoringOtherApps: true)
-    switch alert.runModal() {
-    case .alertFirstButtonReturn:
-      showAppDetailsForm()
-      openPrefilledSlackAppCreation()
-    case .alertSecondButtonReturn:
-      showAppDetailsForm()
-    default:
+    if let setupWindow {
+      NSApplication.shared.activate(ignoringOtherApps: true)
+      setupWindow.makeKeyAndOrderFront(nil)
       return
     }
-  }
 
-  private func showAppDetailsForm() {
-    closeSetupForm()
     let existingCredentials = try? SlackCredentialStore.load()
 
     let clientIDField = NSTextField(string: existingCredentials?.clientID ?? "")
@@ -339,57 +316,147 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       appTokenField.widthAnchor.constraint(equalToConstant: 420),
     ])
 
-    let clientIDLabel = NSTextField(labelWithString: "Client ID")
-    let appTokenLabel = NSTextField(labelWithString: "App-level token (xapp)")
+    let title = NSTextField(labelWithString: "Connect Slack Menubar")
+    title.font = .systemFont(ofSize: 24, weight: .semibold)
+
+    let introduction = setupDescription(
+      "This private Slack app sends your DMs and mentions directly to the menu bar. Complete the three steps below once."
+    )
+
+    let createTitle = setupSectionTitle("1. Create or open the Slack app")
+    let createDescription = setupDescription(
+      """
+      Create Slack App copies the manifest and opens Slack. Choose From a manifest, select YAML, paste, select your workspace underneath, then choose Next and Create.
+      """
+    )
+    let createButton = NSButton(
+      title: "Create Slack App",
+      target: self,
+      action: #selector(createSlackAppFromSetupForm)
+    )
+    createButton.bezelStyle = .rounded
+    let openButton = NSButton(
+      title: "Open Existing Slack App",
+      target: self,
+      action: #selector(openSlackAppsFromSetupForm)
+    )
+    openButton.bezelStyle = .rounded
+    let appButtons = NSStackView(views: [createButton, openButton])
+    appButtons.orientation = .horizontal
+    appButtons.spacing = 8
+
+    let detailsTitle = setupSectionTitle("2. Enter the two app details")
+    let detailsDescription = setupDescription(
+      """
+      On Basic Information, copy Client ID from App Credentials. Under App-Level Tokens, generate a token named Slack Menubar with the connections:write scope.
+      """
+    )
+    let clientIDLabel = setupFieldLabel("Client ID")
+    let appTokenLabel = setupFieldLabel("App-level token (xapp)")
+
+    let authorizeTitle = setupSectionTitle("3. Authorize your Slack account")
+    let authorizeDescription = setupDescription(
+      "Slack will open a permission screen and return here automatically. Access and refresh tokens stay in macOS Keychain."
+    )
+    let connectButton = NSButton(
+      title: "Connect with Slack",
+      target: self,
+      action: #selector(connectFromSetupForm)
+    )
+    connectButton.bezelStyle = .rounded
+    connectButton.controlSize = .large
+    connectButton.keyEquivalent = "\r"
 
     let stack = NSStackView(views: [
+      title,
+      introduction,
+      setupSeparator(),
+      createTitle,
+      createDescription,
+      appButtons,
+      setupSeparator(),
+      detailsTitle,
+      detailsDescription,
       clientIDLabel,
       clientIDField,
       appTokenLabel,
       appTokenField,
+      setupSeparator(),
+      authorizeTitle,
+      authorizeDescription,
+      connectButton,
     ])
     stack.orientation = .vertical
     stack.alignment = .leading
-    stack.spacing = 6
-    stack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
-    stack.frame = NSRect(x: 0, y: 0, width: 430, height: 112)
+    stack.spacing = 10
+    stack.translatesAutoresizingMaskIntoConstraints = false
 
-    let alert = NSAlert()
-    alert.messageText = "Finish creating the Slack app"
-    alert.informativeText =
-      """
-      The manifest is already on your clipboard.
+    let contentView = NSView()
+    contentView.addSubview(stack)
+    NSLayoutConstraint.activate([
+      stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 28),
+      stack.trailingAnchor.constraint(
+        lessThanOrEqualTo: contentView.trailingAnchor,
+        constant: -28
+      ),
+      stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 26),
+      stack.bottomAnchor.constraint(
+        lessThanOrEqualTo: contentView.bottomAnchor,
+        constant: -26
+      ),
+    ])
 
-      1. In Slack, choose From a manifest.
-      2. Select YAML and press ⌘V.
-      3. Select your workspace underneath the YAML, then choose Next.
-      4. Review the configuration and choose Create.
-      5. On Basic Information, copy Client ID from App Credentials.
-      6. Under App-Level Tokens, choose Generate Token and Scopes.
-      7. Name it Slack Menubar, add connections:write, and generate it.
-      8. Paste the Client ID and xapp token below.
-      """
-    alert.alertStyle = .informational
-    alert.accessoryView = stack
-    let connectButton = alert.addButton(withTitle: "Connect with Slack")
-    connectButton.target = self
-    connectButton.action = #selector(connectFromSetupForm)
-    let appsButton = alert.addButton(withTitle: "Open Slack Apps")
-    appsButton.target = self
-    appsButton.action = #selector(openSlackAppsFromSetupForm)
-    let cancelButton = alert.addButton(withTitle: "Cancel")
-    cancelButton.target = self
-    cancelButton.action = #selector(cancelSetupForm)
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 500, height: 590),
+      styleMask: [.titled, .closable],
+      backing: .buffered,
+      defer: false
+    )
+    window.title = "Slack Menubar Setup"
+    window.contentView = contentView
+    window.isReleasedWhenClosed = false
+    window.center()
 
-    setupAlert = alert
+    setupWindow = window
     setupClientIDField = clientIDField
     setupAppTokenField = appTokenField
 
-    let window = alert.window
-    window.isReleasedWhenClosed = false
     NSApplication.shared.activate(ignoringOtherApps: true)
     window.makeKeyAndOrderFront(nil)
     window.makeFirstResponder(clientIDField)
+  }
+
+  private func setupSectionTitle(_ text: String) -> NSTextField {
+    let field = NSTextField(labelWithString: text)
+    field.font = .systemFont(ofSize: 15, weight: .semibold)
+    return field
+  }
+
+  private func setupDescription(_ text: String) -> NSTextField {
+    let field = NSTextField(wrappingLabelWithString: text)
+    field.textColor = .secondaryLabelColor
+    field.preferredMaxLayoutWidth = 420
+    field.translatesAutoresizingMaskIntoConstraints = false
+    field.widthAnchor.constraint(equalToConstant: 420).isActive = true
+    return field
+  }
+
+  private func setupFieldLabel(_ text: String) -> NSTextField {
+    let field = NSTextField(labelWithString: text)
+    field.font = .systemFont(ofSize: 12, weight: .medium)
+    return field
+  }
+
+  private func setupSeparator() -> NSBox {
+    let separator = NSBox()
+    separator.boxType = .separator
+    separator.translatesAutoresizingMaskIntoConstraints = false
+    separator.widthAnchor.constraint(equalToConstant: 420).isActive = true
+    return separator
+  }
+
+  @objc private func createSlackAppFromSetupForm() {
+    openPrefilledSlackAppCreation()
   }
 
   @objc private func connectFromSetupForm() {
@@ -411,7 +478,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         title: "Check the app details",
         message: "Enter the Client ID and an app token beginning with xapp-."
       )
-      setupAlert?.window.makeKeyAndOrderFront(nil)
+      setupWindow?.makeKeyAndOrderFront(nil)
       return
     }
 
@@ -423,13 +490,9 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     openSlackAppManagement()
   }
 
-  @objc private func cancelSetupForm() {
-    closeSetupForm()
-  }
-
   private func closeSetupForm() {
-    setupAlert?.window.close()
-    setupAlert = nil
+    setupWindow?.close()
+    setupWindow = nil
     setupClientIDField = nil
     setupAppTokenField = nil
   }
