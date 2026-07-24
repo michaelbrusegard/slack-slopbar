@@ -12,6 +12,20 @@ public enum SlackBadgeStatus: Equatable, Sendable {
     }
     return false
   }
+
+  public var logDescription: String {
+    switch self {
+    case .noUnread:
+      return "no unread notifications"
+    case .unread(_, let count):
+      return count.map { "unread notifications (count: \($0))" }
+        ?? "unread notifications (no count)"
+    case .slackUnavailable:
+      return "Slack unavailable"
+    case .accessibilityPermissionRequired:
+      return "Accessibility permission required"
+    }
+  }
 }
 
 public enum SlackBadgeParser {

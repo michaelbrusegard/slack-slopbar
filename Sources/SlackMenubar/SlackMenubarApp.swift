@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import ServiceManagement
 import SlackMenubarCore
 
@@ -6,6 +7,10 @@ import SlackMenubarCore
 @MainActor
 final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let badgeReader = SlackDockBadgeReader()
+  private let logger = Logger(
+    subsystem: "com.michaelbrusegard.SlackMenubar",
+    category: "BadgeMonitor"
+  )
   private var statusItem: NSStatusItem!
   private var pollTimer: Timer?
   private var currentStatus: SlackBadgeStatus = .slackUnavailable
@@ -13,6 +18,11 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var launchAtLoginError: String?
 
   static func main() {
+    if CommandLine.arguments.contains("--diagnose") {
+      print(SlackDockBadgeReader().diagnosticReport())
+      return
+    }
+
     let application = NSApplication.shared
     let delegate = SlackMenubarApp()
     application.delegate = delegate
@@ -21,6 +31,10 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    logger.notice(
+      "Started; Accessibility trusted: \(self.badgeReader.hasAccessibilityPermission)"
+    )
+
     statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     statusItem.button?.toolTip = "Slack notification status"
 
@@ -62,7 +76,11 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func refresh() {
-    currentStatus = badgeReader.read()
+    let newStatus = badgeReader.read()
+    if newStatus != currentStatus {
+      logger.notice("Status changed to \(newStatus.logDescription, privacy: .public)")
+    }
+    currentStatus = newStatus
     lastCheckedAt = Date()
     updateStatusItem()
 

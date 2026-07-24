@@ -32,8 +32,12 @@ make test
 make install
 ```
 
-`make install` builds an ad-hoc-signed application, installs it at
+`make install` builds a signed application, installs it at
 `~/Applications/Slack Menubar.app`, and opens it.
+
+When an Apple Development signing identity is available, the build uses it so
+macOS can preserve Accessibility permission across rebuilds. Otherwise, it
+falls back to ad-hoc signing and may require permission again after rebuilding.
 
 On first launch, allow Slack Menubar in **System Settings → Privacy & Security
 → Accessibility**. If it was already open when permission was granted, choose
@@ -73,3 +77,16 @@ Message text, workspace information, and account credentials are never read.
   Slack notification preferences can affect whether the badge appears.
 - Rebuilding or moving an ad-hoc-signed app can cause macOS to request
   Accessibility permission again.
+
+## Troubleshooting
+
+If Slack shows a desktop banner but Slack Menubar remains outlined, verify
+**Slack → Preferences → Notifications → Sound & appearance → Show a badge on
+Slack's icon to indicate new activity**. A banner alone does not provide a
+badge for Slack Menubar to read.
+
+To inspect the signal macOS currently exposes:
+
+```sh
+"$HOME/Applications/Slack Menubar.app/Contents/MacOS/SlackMenubar" --diagnose
+```
