@@ -33,18 +33,17 @@ struct SlackOAuthRequest: Sendable {
     self.clientID = clientID
     self.appToken = appToken
     self.teamID = teamID
-    state = Self.randomURLSafeString(length: 32)
-    codeVerifier = Self.randomURLSafeString(length: 64)
+    // base64url of 24/48 random bytes gives 32/64 URL-safe characters; the
+    // verifier length satisfies RFC 7636's 43-128 requirement.
+    state = Self.base64URL(Self.randomData(count: 24))
+    codeVerifier = Self.base64URL(Self.randomData(count: 48))
   }
 
-  private static func randomURLSafeString(length: Int) -> String {
-    let characters = Array(
-      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"
-    )
+  private static func randomData(count: Int) -> Data {
     var generator = SystemRandomNumberGenerator()
-    return String(
-      (0..<length).map { _ in
-        characters.randomElement(using: &generator)!
+    return Data(
+      (0..<count).map { _ in
+        UInt8.random(in: .min ... .max, using: &generator)
       }
     )
   }
@@ -82,6 +81,18 @@ enum SlackOAuthClient {
       URLQueryItem(name: "redirect_uri", value: redirectURI),
       URLQueryItem(name: "grant_type", value: "authorization_code"),
     ])
+    // The `team` parameter on the authorization URL only pre-selects a
+    // workspace; Slack can still complete the flow for whichever workspace
+    // the browser is signed into, so the granted team must be checked here.
+    if
+      let expectedTeamID = oauthRequest.teamID,
+      let authorizedTeamID = response.team?.id,
+      authorizedTeamID != expectedTeamID
+    {
+      throw SlackAPIError.workspaceMismatch(
+        authorized: response.team?.name ?? authorizedTeamID
+      )
+    }
     return try credentials(
       from: response,
       clientID: oauthRequest.clientID,
@@ -112,38 +123,15 @@ enum SlackOAuthClient {
   private static func tokenRequest(
     _ formItems: [URLQueryItem]
   ) async throws -> SlackOAuthResponse {
-    guard let url = URL(string: "https://slack.com/api/oauth.v2.access") else {
-      throw SlackOAuthError.invalidURL
-    }
-
-    var form = URLComponents()
-    form.queryItems = formItems
-    var request = URLRequest(url: url)
-    request.httpMethod = "POST"
-    request.setValue(
-      "application/x-www-form-urlencoded",
-      forHTTPHeaderField: "Content-Type"
+    let response: SlackOAuthResponse = try await SlackHTTP.request(
+      method: "oauth.v2.access",
+      httpMethod: "POST",
+      formItems: formItems
     )
-    request.httpBody = form.percentEncodedQuery.map { Data($0.utf8) }
-
-    let (data, response) = try await URLSession.shared.data(for: request)
-    guard
-      let httpResponse = response as? HTTPURLResponse,
-      (200..<300).contains(httpResponse.statusCode)
-    else {
-      throw SlackOAuthError.invalidResponse
+    guard response.ok else {
+      throw SlackAPIError.api(response.error ?? "OAuth failed")
     }
-
-    let oauthResponse: SlackOAuthResponse
-    do {
-      oauthResponse = try JSONDecoder().decode(SlackOAuthResponse.self, from: data)
-    } catch {
-      throw SlackOAuthError.decoding(error.localizedDescription)
-    }
-    guard oauthResponse.ok else {
-      throw SlackOAuthError.api(oauthResponse.error ?? "OAuth failed")
-    }
-    return oauthResponse
+    return response
   }
 
   private static func credentials(
@@ -153,7 +141,7 @@ enum SlackOAuthClient {
   ) throws -> SlackCredentials {
     let accessToken = response.authedUser?.accessToken ?? response.accessToken
     guard let accessToken else {
-      throw SlackOAuthError.missingUserToken
+      throw SlackAPIError.missingUserToken
     }
 
     let refreshToken =
@@ -161,7 +149,7 @@ enum SlackOAuthClient {
       ?? response.refreshToken
     let expiresIn = response.authedUser?.expiresIn ?? response.expiresIn
     if expiresIn != nil, refreshToken == nil {
-      throw SlackOAuthError.missingRefreshToken
+      throw SlackAPIError.missingRefreshToken
     }
     return SlackCredentials(
       clientID: clientID,
@@ -174,7 +162,6 @@ enum SlackOAuthClient {
     )
   }
 }
-
 private struct SlackOAuthResponse: Decodable {
   struct AuthedUser: Decodable {
     let accessToken: String?
@@ -188,12 +175,18 @@ private struct SlackOAuthResponse: Decodable {
     }
   }
 
+  struct Team: Decodable {
+    let id: String?
+    let name: String?
+  }
+
   let ok: Bool
   let error: String?
   let accessToken: String?
   let refreshToken: String?
   let expiresIn: Int?
   let authedUser: AuthedUser?
+  let team: Team?
 
   enum CodingKeys: String, CodingKey {
     case ok
@@ -202,31 +195,6 @@ private struct SlackOAuthResponse: Decodable {
     case refreshToken = "refresh_token"
     case expiresIn = "expires_in"
     case authedUser = "authed_user"
-  }
-}
-
-private enum SlackOAuthError: LocalizedError {
-  case api(String)
-  case decoding(String)
-  case invalidResponse
-  case invalidURL
-  case missingRefreshToken
-  case missingUserToken
-
-  var errorDescription: String? {
-    switch self {
-    case .api(let message):
-      return "Slack authorization failed: \(message)"
-    case .decoding(let message):
-      return "Could not read Slack's authorization response: \(message)"
-    case .invalidResponse:
-      return "Slack returned an invalid authorization response"
-    case .invalidURL:
-      return "Could not construct the Slack authorization URL"
-    case .missingRefreshToken:
-      return "Slack did not return the refresh token needed to stay connected"
-    case .missingUserToken:
-      return "Slack did not return a user access token"
-    }
+    case team
   }
 }

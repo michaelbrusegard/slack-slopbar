@@ -1,26 +1,44 @@
 # Slack Menubar
 
-A native macOS menu-bar utility that keeps unread direct messages and personal
-Slack mentions visible.
+A native macOS menu-bar utility that shows everything you have not read in
+Slack: unread channels, direct messages, group DMs, and mentions.
 
-Slack Menubar connects directly to Slack using a private Slack app and Socket
-Mode. It does not rely on Slack's unreliable macOS Dock badge and does not need
-a hosted server.
+Slack Menubar connects directly to Slack using a private Slack app. Slack's
+own per-conversation read state is the source of truth, so the menu matches
+Slack exactly — it survives app restarts, network drops, and reading on other
+devices. Socket Mode events only make updates instant.
 
 ## Behavior
 
-- A filled four-color Slack-style mark means notifications are pending.
-- An outlined monochrome mark means the notification list is clear.
-- The pending count appears beside the icon.
-- The menu identifies the sender and whether the event was a DM or mention.
-- Selecting an item opens its Slack conversation and removes the item.
-- Reading a conversation in Slack clears its matching menu notifications
-  automatically.
-- **Clear All Notifications** acknowledges everything without opening Slack.
+- A filled four-color Slack-style mark means unread conversations exist; an
+  outlined monochrome mark means everything is read.
+- The count beside the icon tracks Slack's red badge: direct messages and
+  mentions. Plain channel unreads fill the icon without a number.
+- The menu groups unreads into **Mentions**, **Direct Messages**, and
+  **Channels**, with per-conversation unread counts.
+- Selecting an item opens the conversation in Slack; reading it there clears
+  the item automatically (anywhere — desktop, mobile, web).
+- **Dismiss All** hides current unreads locally; a conversation reappears as
+  soon as it gets new messages.
 
-Pending items persist across app restarts. While notifications are pending,
-Slack Menubar checks their conversations' read markers every 30 seconds and
-whenever you open the menu.
+How it stays correct:
+
+- A full unread sweep of every conversation you are a member of runs at
+  connect, after reconnects, and on wake from sleep — nothing that happened
+  while the app was closed is missed.
+- Live Socket Mode messages re-check just the affected conversation within
+  about a second.
+- Conversations currently unread are re-checked adaptively: about every two
+  seconds when one conversation is pending, scaling with the number of
+  conversations to stay within Slack's API rate limit. Opening the menu also
+  triggers an immediate check.
+- The connection line shows when unread state was last checked and visibly
+  reports retries instead of silently treating a failed request as current.
+
+The unread list persists across restarts and refreshes as soon as the first
+sweep completes. In workspaces with very many channels the initial sweep can
+take a few minutes because Slack rate-limits per-conversation lookups; the
+menu fills in progressively afterward.
 
 ## Slack app setup
 
@@ -60,15 +78,13 @@ Slack requires message-history scopes to deliver user-level message events.
 The manifest requests access to public channels, private channels, DMs, and
 group DMs that the authorizing user can already access, plus basic user names.
 
-Slack Menubar filters the live event stream to:
-
-- Messages in one-to-one DMs.
-- Channel, private-channel, and group-DM messages containing a direct mention
-  of your Slack user ID.
+Slack Menubar tracks unread state for every conversation you are a member of
+and detects mentions of your Slack user ID in live messages, including
+mentions inside bot messages' Block Kit content and legacy attachments.
 
 Message bodies are inspected in memory only for mention matching. The app
-stores sender name, conversation name, message timestamp, and Slack IDs for
-pending notifications; it does not persist message text.
+stores conversation names, unread counts, read markers, and Slack IDs; it
+does not persist message text.
 
 ## Build and install
 
@@ -99,13 +115,16 @@ Open `Package.swift` in Xcode for development.
 
 ## Launch at login
 
-Choose **Launch at Login** from the app menu. Keeping the app running matters:
-Socket Mode delivers live events and the app does not currently backfill events
-missed while it was offline.
+Choose **Launch at Login** from the app menu. The app catches up on everything
+it missed whenever it reconnects, but only a running app updates instantly.
 
-## Current notification coverage
+## Known limitations
 
-Slack Menubar intentionally does not notify for every channel message. It also
-does not yet reproduce Slack's keyword notifications, followed-thread replies,
-user-group mentions, `@here`, or `@channel`. These can be added later, but they
-require more preference and membership data to match Slack's behavior.
+- Muted channels still count as unread — Slack's public API does not expose
+  mute preferences, so the menu may show conversations Slack itself would not
+  badge.
+- Mentions are flagged from the live event stream, so a mention that arrives
+  while the app is offline shows up as a plain unread rather than under
+  **Mentions** until a newer mention arrives.
+- Keyword notifications, followed-thread replies, user-group mentions,
+  `@here`, and `@channel` are not distinguished from plain unreads.

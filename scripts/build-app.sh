@@ -24,7 +24,6 @@ mkdir -p "$contents_directory/MacOS"
 mkdir -p "$contents_directory/Resources"
 cp "$binary_directory/SlackMenubar" "$contents_directory/MacOS/SlackMenubar"
 cp "$project_directory/Packaging/Info.plist" "$contents_directory/Info.plist"
-cp "$project_directory/SlackAppManifest.yaml" "$contents_directory/Resources/SlackAppManifest.yaml"
 
 codesign_identity=${CODESIGN_IDENTITY:-}
 if [ -z "$codesign_identity" ]; then

@@ -3,7 +3,6 @@ import Foundation
 struct SlackWorkspace: Equatable, Sendable {
   let id: String
   let name: String
-  let domain: String?
 }
 
 struct SlackWorkspaceSelection: Sendable {
@@ -24,7 +23,7 @@ enum SlackWorkspaceDiscovery {
 
     let workspaces = state.workspaces.values
       .map {
-        SlackWorkspace(id: $0.id, name: $0.name, domain: $0.domain)
+        SlackWorkspace(id: $0.id, name: $0.name)
       }
       .sorted {
         $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
@@ -40,7 +39,6 @@ private struct SlackDesktopState: Decodable {
   struct Workspace: Decodable {
     let id: String
     let name: String
-    let domain: String?
   }
 
   struct WorkspacesMeta: Decodable {

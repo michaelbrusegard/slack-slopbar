@@ -7,26 +7,29 @@ import SlackMenubarCore
 @MainActor
 final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let apiService = SlackAPIService()
-  private let notificationStore = SlackNotificationStore()
+  private let unreadStore = SlackUnreadStore()
   private let logger = Logger(
     subsystem: "com.michaelbrusegard.SlackMenubar",
     category: "SlackAPI"
   )
 
   private var statusItem: NSStatusItem!
-  private var connectionState: SlackConnectionState = .unconfigured
   private var setupError: String?
   private var pendingOAuthRequest: SlackOAuthRequest?
   private var setupWindow: NSWindow?
   private var setupClientIDField: NSTextField?
   private var setupAppTokenField: NSSecureTextField?
   private var setupWorkspacePopup: NSPopUpButton?
-  private var readStateTask: Task<Void, Never>?
-  private var isSynchronizingReadState = false
+  private var isMenuOpen = false
+
+  // NSApplication.delegate is unretained; without a strong reference the
+  // delegate could be deallocated once main()'s local goes out of scope.
+  private static var sharedDelegate: SlackMenubarApp?
 
   static func main() {
     let application = NSApplication.shared
     let delegate = SlackMenubarApp()
+    sharedDelegate = delegate
     application.delegate = delegate
     application.setActivationPolicy(.accessory)
     application.run()
@@ -44,30 +47,47 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       guard let self else {
         return
       }
-      connectionState = state
       logger.notice("Connection state: \(state.menuDescription, privacy: .public)")
       refreshUI()
     }
-    apiService.onNotification = { [weak self] notification in
-      guard let self else {
-        return
-      }
-      logger.notice(
-        "Received \(notification.kind.rawValue, privacy: .public)"
-      )
-      notificationStore.add(notification)
+    apiService.onSyncStatusChange = { [weak self] _ in
+      self?.refreshUI()
     }
-    notificationStore.onChange = { [weak self] _ in
+    apiService.onUnreadsChanged = { [weak self] unreads in
+      self?.unreadStore.apply(unreads)
+    }
+    apiService.onMention = { [weak self] channelID, mark in
+      self?.unreadStore.markMention(channelID: channelID, mark: mark)
+    }
+    apiService.onTeamChange = { [weak self] teamID in
+      // After re-authorizing to a different workspace, old-team unread state
+      // is meaningless under the new token.
+      self?.unreadStore.handleTeamChange(teamID)
+    }
+    unreadStore.onChange = { [weak self] in
       self?.refreshUI()
     }
 
+    NSWorkspace.shared.notificationCenter.addObserver(
+      self,
+      selector: #selector(systemDidWake),
+      name: NSWorkspace.didWakeNotification,
+      object: nil
+    )
+
     refreshUI()
     loadCredentialsAndConnect()
-    startReadStateSync()
+  }
+
+  @objc private func systemDidWake() {
+    // The socket is usually half-dead after sleep; reconnect immediately
+    // instead of waiting for the keepalive to notice, and re-sweep to pick
+    // up whatever happened while asleep.
+    apiService.refreshConnection()
+    apiService.requestSweep(force: true)
   }
 
   func applicationWillTerminate(_ notification: Notification) {
-    readStateTask?.cancel()
     apiService.disconnect()
   }
 
@@ -81,10 +101,13 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   func menuWillOpen(_ menu: NSMenu) {
+    isMenuOpen = true
     rebuildMenu(menu)
-    Task { [weak self] in
-      await self?.synchronizeReadState()
-    }
+    apiService.requestRecheck()
+  }
+
+  func menuDidClose(_ menu: NSMenu) {
+    isMenuOpen = false
   }
 
   private func configureApplicationMenu() {
@@ -92,11 +115,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     let applicationItem = NSMenuItem()
     let applicationMenu = NSMenu()
-    applicationMenu.addItem(
-      withTitle: "Quit Slack Menubar",
-      action: #selector(quit),
-      keyEquivalent: "q"
-    ).target = self
+    applicationMenu.addItem(makeQuitMenuItem())
     applicationItem.submenu = applicationMenu
     mainMenu.addItem(applicationItem)
 
@@ -135,61 +154,36 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func loadCredentialsAndConnect() {
-    do {
-      if let credentials = try SlackCredentialStore.load() {
-        apiService.connect(using: credentials)
-      } else {
-        DispatchQueue.main.async { [weak self] in
-          self?.configureSlack()
-        }
-      }
-    } catch {
-      setupError = "Keychain: \(error.localizedDescription)"
-      refreshUI()
-    }
-  }
-
-  private func startReadStateSync() {
-    readStateTask?.cancel()
-    readStateTask = Task { [weak self] in
-      while !Task.isCancelled {
-        await self?.synchronizeReadState()
-        do {
-          try await Task.sleep(for: .seconds(30))
-        } catch {
+    // Keychain IPC can stall (locked keychain, slow securityd right after
+    // login); loading off the main actor keeps launch responsive.
+    Task { [weak self] in
+      do {
+        let credentials = try await Task.detached {
+          try SlackCredentialStore.load()
+        }.value
+        guard let self else {
           return
         }
+        if let credentials {
+          apiService.connect(using: credentials)
+        } else {
+          configureSlack()
+        }
+      } catch {
+        guard let self else {
+          return
+        }
+        setupError = "Keychain: \(error.localizedDescription)"
+        refreshUI()
       }
-    }
-  }
-
-  private func synchronizeReadState() async {
-    guard !isSynchronizingReadState else {
-      return
-    }
-    let channelIDs = Array(
-      Set(notificationStore.notifications.map(\.channelID))
-    ).sorted()
-    guard !channelIDs.isEmpty else {
-      return
-    }
-
-    isSynchronizingReadState = true
-    defer {
-      isSynchronizingReadState = false
-    }
-    let states = await apiService.readStates(for: channelIDs)
-    for state in states {
-      notificationStore.removeRead(
-        in: state.channelID,
-        through: state.lastRead
-      )
     }
   }
 
   private func refreshUI() {
     updateStatusItem()
-    if let menu = statusItem.menu, menu.numberOfItems > 0 {
+    // menuWillOpen rebuilds anyway, so rebuilding a closed menu is wasted
+    // work; only an open menu needs live updates.
+    if isMenuOpen, let menu = statusItem.menu {
       rebuildMenu(menu)
     }
   }
@@ -199,15 +193,17 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       return
     }
 
-    let count = notificationStore.notifications.count
-    let hasNotifications = count > 0
-    button.image = SlackStatusIcon.slackMark(filled: hasNotifications)
-    button.title = hasNotifications ? " \(count)" : ""
+    let unreadCount = unreadStore.visibleUnreads.count
+    let badge = unreadStore.badgeCount
+    button.image = SlackStatusIcon.slackMark(filled: unreadCount > 0)
+    // The number tracks Slack's red badge (DMs and mentions); plain channel
+    // unreads fill the icon but do not count.
+    button.title = badge > 0 ? " \(badge)" : ""
 
     let description =
-      hasNotifications
-      ? "Slack has \(count) pending \(count == 1 ? "notification" : "notifications")"
-      : "Slack has no pending notifications"
+      unreadCount > 0
+      ? "Slack has \(unreadCount) unread \(unreadCount == 1 ? "conversation" : "conversations")"
+      : "Slack has no unread conversations"
     button.setAccessibilityLabel(description)
     button.toolTip = description
   }
@@ -216,7 +212,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     menu.removeAllItems()
 
     let connection = NSMenuItem(
-      title: connectionState.menuDescription,
+      title: connectionMenuDescription,
       action: nil,
       keyEquivalent: ""
     )
@@ -229,43 +225,54 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       menu.addItem(error)
     }
 
-    if notificationStore.notifications.isEmpty {
+    let visible = unreadStore.visibleUnreads
+    if visible.isEmpty {
       let empty = NSMenuItem(
-        title: "No pending DMs or mentions",
+        title: "No unread conversations",
         action: nil,
         keyEquivalent: ""
       )
       empty.isEnabled = false
       menu.addItem(empty)
     } else {
-      menu.addItem(.separator())
-      let heading = NSMenuItem(
-        title: "Notifications",
-        action: nil,
-        keyEquivalent: ""
-      )
-      heading.isEnabled = false
-      menu.addItem(heading)
-
-      for notification in notificationStore.notifications.prefix(20) {
-        let item = NSMenuItem(
-          title: notificationTitle(notification),
-          action: #selector(openNotification(_:)),
-          keyEquivalent: ""
-        )
-        item.target = self
-        item.representedObject = notification.id
-        item.toolTip = notification.receivedAt.formatted(
-          date: .abbreviated,
-          time: .shortened
-        )
-        menu.addItem(item)
+      let mentions = visible.filter {
+        !$0.kind.isDirect && unreadStore.mentionMark(for: $0) != nil
+      }
+      let directMessages = visible.filter(\.kind.isDirect)
+      let channels = visible.filter {
+        !$0.kind.isDirect && unreadStore.mentionMark(for: $0) == nil
       }
 
-      if notificationStore.notifications.count > 20 {
-        let remaining = notificationStore.notifications.count - 20
+      let maximumItems = 20
+      var shownCount = 0
+      func addSection(_ title: String, _ unreads: [SlackChannelUnread]) {
+        guard !unreads.isEmpty, shownCount < maximumItems else {
+          return
+        }
+        menu.addItem(.separator())
+        let heading = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        heading.isEnabled = false
+        menu.addItem(heading)
+        for unread in unreads.prefix(maximumItems - shownCount) {
+          let item = NSMenuItem(
+            title: unreadTitle(unread),
+            action: #selector(openConversation(_:)),
+            keyEquivalent: ""
+          )
+          item.target = self
+          item.representedObject = unread.channelID
+          menu.addItem(item)
+          shownCount += 1
+        }
+      }
+
+      addSection("Mentions", mentions)
+      addSection("Direct Messages", directMessages)
+      addSection("Channels", channels)
+
+      if visible.count > shownCount {
         let more = NSMenuItem(
-          title: "…and \(remaining) more",
+          title: "…and \(visible.count - shownCount) more",
           action: nil,
           keyEquivalent: ""
         )
@@ -274,8 +281,8 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       }
 
       menu.addItem(
-        withTitle: "Clear All Notifications",
-        action: #selector(clearNotifications),
+        withTitle: "Dismiss All",
+        action: #selector(dismissAll),
         keyEquivalent: ""
       ).target = self
     }
@@ -286,9 +293,29 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       action: #selector(openSlack),
       keyEquivalent: ""
     ).target = self
+    var showReconnect = setupError != nil
+    if case .disconnected = apiService.state {
+      showReconnect = true
+    }
+    if case .reconnecting = apiService.state {
+      showReconnect = true
+    }
+    if showReconnect {
+      menu.addItem(
+        withTitle: "Reconnect",
+        action: #selector(reconnect),
+        keyEquivalent: ""
+      ).target = self
+    }
+
     menu.addItem(
       withTitle: "Slack Setup Assistant…",
       action: #selector(configureSlack),
+      keyEquivalent: ""
+    ).target = self
+    menu.addItem(
+      withTitle: "Sign Out of Slack…",
+      action: #selector(signOut),
       keyEquivalent: ""
     ).target = self
 
@@ -302,20 +329,60 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     menu.addItem(launchAtLogin)
 
     menu.addItem(.separator())
-    menu.addItem(
-      withTitle: "Quit Slack Menubar",
-      action: #selector(quit),
-      keyEquivalent: "q"
-    ).target = self
+    menu.addItem(makeQuitMenuItem())
   }
 
-  private func notificationTitle(_ notification: SlackMenuNotification) -> String {
-    switch notification.kind {
-    case .directMessage:
-      return "\(notification.senderName) — direct message"
-    case .mention:
-      return "\(notification.senderName) mentioned you in \(notification.conversationName)"
+  private var connectionMenuDescription: String {
+    let base = apiService.state.menuDescription
+    guard case .connected = apiService.state else {
+      return base
     }
+
+    let sync = apiService.syncStatus
+    if sync.isChecking {
+      return "\(base) · checking unread state…"
+    }
+    if sync.failedConversationCount > 0 {
+      if let lastCheck = sync.lastSuccessfulCheck {
+        return "\(base) · read sync retrying (last success \(relativeAge(of: lastCheck)))"
+      }
+      return "\(base) · read sync retrying"
+    }
+    if let lastCheck = sync.lastSuccessfulCheck {
+      return "\(base) · read state synced \(relativeAge(of: lastCheck))"
+    }
+    return "\(base) · unread sync pending"
+  }
+
+  private func relativeAge(of date: Date) -> String {
+    let seconds = max(0, Int(Date().timeIntervalSince(date)))
+    if seconds < 3 {
+      return "now"
+    }
+    if seconds < 60 {
+      return "\(seconds)s ago"
+    }
+    return "\(seconds / 60)m ago"
+  }
+
+  private func makeQuitMenuItem() -> NSMenuItem {
+    let item = NSMenuItem(
+      title: "Quit Slack Menubar",
+      action: #selector(quit),
+      keyEquivalent: "q"
+    )
+    item.target = self
+    return item
+  }
+
+  private func unreadTitle(_ unread: SlackChannelUnread) -> String {
+    if !unread.kind.isDirect, let mark = unreadStore.mentionMark(for: unread) {
+      return "\(unread.name) — \(mark.senderName) mentioned you"
+    }
+    if let count = unread.unreadCount {
+      return "\(unread.name) — \(count) unread"
+    }
+    return "\(unread.name) — unread"
   }
 
   @objc private func configureSlack() {
@@ -337,11 +404,6 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     appTokenField.placeholderString = "xapp-…"
     appTokenField.controlSize = .regular
     appTokenField.translatesAutoresizingMaskIntoConstraints = false
-
-    NSLayoutConstraint.activate([
-      clientIDField.widthAnchor.constraint(equalToConstant: 420),
-      appTokenField.widthAnchor.constraint(equalToConstant: 420),
-    ])
 
     let title = NSTextField(labelWithString: "Connect Slack Menubar")
     title.font = .systemFont(ofSize: 24, weight: .semibold)
@@ -387,7 +449,6 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let workspaceLabel = setupFieldLabel("Target workspace")
     let workspacePopup = NSPopUpButton()
     workspacePopup.translatesAutoresizingMaskIntoConstraints = false
-    workspacePopup.widthAnchor.constraint(equalToConstant: 420).isActive = true
     for workspace in workspaceSelection.workspaces {
       workspacePopup.addItem(withTitle: workspace.name)
       workspacePopup.lastItem?.representedObject = workspace.id
@@ -449,29 +510,52 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     stack.spacing = 10
     stack.translatesAutoresizingMaskIntoConstraints = false
 
+    // One width contract: the stack defines the form width and every
+    // full-width control follows it, instead of each view carrying its own
+    // hard-coded width.
+    let fullWidthViews: [NSView] =
+      [
+        introduction,
+        createDescription,
+        detailsDescription,
+        authorizeDescription,
+        workspacePopup,
+        clientIDField,
+        appTokenField,
+      ] + stack.arrangedSubviews.filter { $0 is NSBox }
+    NSLayoutConstraint.activate(
+      [stack.widthAnchor.constraint(equalToConstant: Self.setupFormWidth)]
+        + fullWidthViews.map {
+          $0.widthAnchor.constraint(equalTo: stack.widthAnchor)
+        }
+    )
+
     let contentView = NSView()
     contentView.addSubview(stack)
     NSLayoutConstraint.activate([
       stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 28),
       stack.trailingAnchor.constraint(
-        lessThanOrEqualTo: contentView.trailingAnchor,
+        equalTo: contentView.trailingAnchor,
         constant: -28
       ),
       stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 26),
       stack.bottomAnchor.constraint(
-        lessThanOrEqualTo: contentView.bottomAnchor,
+        equalTo: contentView.bottomAnchor,
         constant: -26
       ),
     ])
 
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 500, height: 650),
+      contentRect: .zero,
       styleMask: [.titled, .closable],
       backing: .buffered,
       defer: false
     )
     window.title = "Slack Menubar Setup"
     window.contentView = contentView
+    // Sizing from the layout means added steps or longer text can never be
+    // clipped by a hard-coded window height.
+    window.setContentSize(contentView.fittingSize)
     window.isReleasedWhenClosed = false
     window.level = .floating
     window.center()
@@ -492,12 +576,13 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     return field
   }
 
+  private static let setupFormWidth: CGFloat = 420
+
   private func setupDescription(_ text: String) -> NSTextField {
     let field = NSTextField(wrappingLabelWithString: text)
     field.textColor = .secondaryLabelColor
-    field.preferredMaxLayoutWidth = 420
+    field.preferredMaxLayoutWidth = Self.setupFormWidth
     field.translatesAutoresizingMaskIntoConstraints = false
-    field.widthAnchor.constraint(equalToConstant: 420).isActive = true
     return field
   }
 
@@ -511,7 +596,6 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let separator = NSBox()
     separator.boxType = .separator
     separator.translatesAutoresizingMaskIntoConstraints = false
-    separator.widthAnchor.constraint(equalToConstant: 420).isActive = true
     return separator
   }
 
@@ -591,30 +675,35 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func finishSlackAuthorization(_ callbackURL: URL) {
-    guard let oauthRequest = pendingOAuthRequest else {
-      showError(
-        title: "Authorization expired",
-        message: "Open Slack Setup Assistant and try connecting again."
-      )
-      return
-    }
-
     let queryItems = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?
       .queryItems
     var values: [String: String] = [:]
     for item in queryItems ?? [] {
       values[item.name] = item.value
     }
-    guard values["state"] == oauthRequest.state else {
-      pendingOAuthRequest = nil
-      showError(
-        title: "Could not verify Slack authorization",
-        message: "The OAuth state did not match. Please try again."
-      )
+
+    guard
+      let oauthRequest = pendingOAuthRequest,
+      values["state"] == oauthRequest.state
+    else {
+      // A callback from an abandoned earlier attempt must not invalidate an
+      // in-flight request, so only surface errors here — never clear it.
+      if let slackError = values["error"] {
+        showError(
+          title: "Slack authorization was not completed",
+          message: slackError
+        )
+      } else if pendingOAuthRequest == nil {
+        showError(
+          title: "Authorization expired",
+          message: "Open Slack Setup Assistant and try connecting again."
+        )
+      }
       return
     }
+    pendingOAuthRequest = nil
+
     if let slackError = values["error"] {
-      pendingOAuthRequest = nil
       showError(
         title: "Slack authorization was not completed",
         message: slackError
@@ -622,7 +711,6 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       return
     }
     guard let code = values["code"] else {
-      pendingOAuthRequest = nil
       showError(
         title: "Slack did not return an authorization code",
         message: "Open Slack Setup Assistant and try again."
@@ -630,7 +718,6 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       return
     }
 
-    pendingOAuthRequest = nil
     Task {
       do {
         let credentials = try await SlackOAuthClient.exchange(
@@ -640,7 +727,9 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard credentials.isPlausible else {
           throw SlackSetupError.invalidToken
         }
-        try SlackCredentialStore.save(credentials)
+        try await Task.detached {
+          try SlackCredentialStore.save(credentials)
+        }.value
         setupError = nil
         apiService.connect(using: credentials)
         showAuthorizationComplete()
@@ -666,11 +755,36 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     alert.runModal()
   }
 
-  @objc private func openNotification(_ sender: NSMenuItem) {
+  @objc private func signOut() {
+    let alert = NSAlert()
+    alert.messageText = "Sign out of Slack?"
+    alert.informativeText =
+      "Slack Menubar will disconnect, remove its Slack tokens from the Keychain, and clear pending notifications."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Sign Out")
+    alert.addButton(withTitle: "Cancel")
+
+    NSApplication.shared.activate(ignoringOtherApps: true)
+    guard alert.runModal() == .alertFirstButtonReturn else {
+      return
+    }
+
+    do {
+      try SlackCredentialStore.remove()
+      apiService.reset()
+      unreadStore.wipe()
+      setupError = nil
+    } catch {
+      setupError = "Keychain: \(error.localizedDescription)"
+    }
+    refreshUI()
+  }
+
+  @objc private func openConversation(_ sender: NSMenuItem) {
     guard
-      let notificationID = sender.representedObject as? String,
-      let notification = notificationStore.notifications.first(where: {
-        $0.id == notificationID
+      let channelID = sender.representedObject as? String,
+      let unread = unreadStore.visibleUnreads.first(where: {
+        $0.channelID == channelID
       })
     else {
       return
@@ -679,19 +793,36 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var components = URLComponents()
     components.scheme = "slack"
     components.host = "channel"
-    components.queryItems = [
-      URLQueryItem(name: "team", value: notification.teamID),
-      URLQueryItem(name: "id", value: notification.channelID),
-      URLQueryItem(name: "message", value: notification.messageTimestamp),
-    ]
+    var queryItems = [URLQueryItem(name: "id", value: unread.channelID)]
+    if !unread.teamID.isEmpty {
+      queryItems.insert(URLQueryItem(name: "team", value: unread.teamID), at: 0)
+    }
+    components.queryItems = queryItems
     if let url = components.url {
       NSWorkspace.shared.open(url)
     }
-    notificationStore.remove(id: notificationID)
+
+    // Reading the conversation in Slack advances its read marker; a quick
+    // re-check clears the menu item without waiting for the 30-second loop.
+    Task { [weak self] in
+      try? await Task.sleep(for: .seconds(5))
+      self?.apiService.requestRecheck()
+    }
   }
 
-  @objc private func clearNotifications() {
-    notificationStore.clear()
+  @objc private func dismissAll() {
+    unreadStore.dismissAll()
+  }
+
+  @objc private func reconnect() {
+    setupError = nil
+    apiService.refreshConnection()
+    if apiService.state == .unconfigured {
+      // No credentials in memory (for example after a launch-time Keychain
+      // failure) — retry the full load instead of forcing a new setup run.
+      loadCredentialsAndConnect()
+    }
+    refreshUI()
   }
 
   @objc private func openSlack() {
@@ -707,18 +838,9 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   @objc private func copySlackAppManifest() {
-    guard let manifest = bundledSlackAppManifest() else {
-      showError(
-        title: "Manifest unavailable",
-        message:
-          "Build the app bundle with make app or copy SlackAppManifest.yaml from the repository."
-      )
-      return
-    }
-
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
-    pasteboard.setString(manifest, forType: .string)
+    pasteboard.setString(SlackAppManifest.yaml, forType: .string)
   }
 
   private func openSlackAppCreation() {
@@ -730,18 +852,6 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       return
     }
     NSWorkspace.shared.open(url)
-  }
-
-  private func bundledSlackAppManifest() -> String? {
-    guard
-      let url = Bundle.main.url(
-        forResource: "SlackAppManifest",
-        withExtension: "yaml"
-      )
-    else {
-      return nil
-    }
-    return try? String(contentsOf: url, encoding: .utf8)
   }
 
   @objc private func toggleLaunchAtLogin() {

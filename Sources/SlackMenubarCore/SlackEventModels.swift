@@ -1,8 +1,10 @@
 import Foundation
 
-public enum SlackNotificationKind: String, Codable, Equatable, Sendable {
-  case directMessage
-  case mention
+public struct SlackAttachment: Decodable, Equatable, Sendable {
+  public let fallback: String?
+  public let pretext: String?
+  public let text: String?
+  public let title: String?
 }
 
 public struct SlackMessageEvent: Decodable, Equatable, Sendable {
@@ -15,6 +17,10 @@ public struct SlackMessageEvent: Decodable, Equatable, Sendable {
   public let text: String
   public let timestamp: String
   public let hidden: Bool?
+  public let attachments: [SlackAttachment]?
+  // User IDs mentioned in Block Kit content, where bot and app messages
+  // usually carry their text while the top-level text field stays empty.
+  public let blockMentionedUserIDs: Set<String>
 
   enum CodingKeys: String, CodingKey {
     case type
@@ -26,6 +32,8 @@ public struct SlackMessageEvent: Decodable, Equatable, Sendable {
     case text
     case timestamp = "ts"
     case hidden
+    case attachments
+    case blocks
   }
 
   public init(from decoder: any Decoder) throws {
@@ -39,6 +47,65 @@ public struct SlackMessageEvent: Decodable, Equatable, Sendable {
     text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
     timestamp = try container.decodeIfPresent(String.self, forKey: .timestamp) ?? ""
     hidden = try container.decodeIfPresent(Bool.self, forKey: .hidden)
+    attachments = try? container.decodeIfPresent(
+      [SlackAttachment].self,
+      forKey: .attachments
+    )
+    let blocks = try? container.decodeIfPresent([JSONValue].self, forKey: .blocks)
+    var mentions: Set<String> = []
+    for block in blocks ?? [] {
+      block.collectUserMentions(into: &mentions)
+    }
+    blockMentionedUserIDs = mentions
+  }
+}
+
+// A minimal JSON tree used to search Block Kit content for user mention
+// elements without modeling Slack's full (and evolving) block schema.
+private indirect enum JSONValue: Decodable {
+  case object([String: JSONValue])
+  case array([JSONValue])
+  case string(String)
+  case number(Double)
+  case bool(Bool)
+  case null
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    if container.decodeNil() {
+      self = .null
+    } else if let bool = try? container.decode(Bool.self) {
+      self = .bool(bool)
+    } else if let number = try? container.decode(Double.self) {
+      self = .number(number)
+    } else if let string = try? container.decode(String.self) {
+      self = .string(string)
+    } else if let array = try? container.decode([JSONValue].self) {
+      self = .array(array)
+    } else {
+      self = .object(try container.decode([String: JSONValue].self))
+    }
+  }
+
+  func collectUserMentions(into mentions: inout Set<String>) {
+    switch self {
+    case .object(let members):
+      if
+        case .string("user")? = members["type"],
+        case .string(let userID)? = members["user_id"]
+      {
+        mentions.insert(userID)
+      }
+      for value in members.values {
+        value.collectUserMentions(into: &mentions)
+      }
+    case .array(let values):
+      for value in values {
+        value.collectUserMentions(into: &mentions)
+      }
+    case .string, .number, .bool, .null:
+      break
+    }
   }
 }
 
@@ -64,90 +131,63 @@ public struct SlackSocketEnvelope: Decodable, Equatable, Sendable {
   }
 }
 
-public struct SlackMenuNotification: Codable, Equatable, Identifiable, Sendable {
-  public let id: String
-  public let teamID: String
-  public let channelID: String
-  public let messageTimestamp: String
-  public let senderName: String
-  public let conversationName: String
-  public let kind: SlackNotificationKind
-  public let receivedAt: Date
+public enum SlackEventClassifier {
+  public static let ignoredSubtypes: Set<String> = [
+    "channel_join",
+    "channel_leave",
+    "message_changed",
+    "message_deleted",
+  ]
 
-  public init(
-    teamID: String,
-    channelID: String,
-    messageTimestamp: String,
-    senderName: String,
-    conversationName: String,
-    kind: SlackNotificationKind,
-    receivedAt: Date
-  ) {
-    id = "\(teamID):\(channelID):\(messageTimestamp)"
-    self.teamID = teamID
-    self.channelID = channelID
-    self.messageTimestamp = messageTimestamp
-    self.senderName = senderName
-    self.conversationName = conversationName
-    self.kind = kind
-    self.receivedAt = receivedAt
+  // Any message event worth re-checking the conversation's read state for.
+  // The Slack API is the source of truth for what is unread; events only
+  // decide when to ask, so this deliberately stays broad.
+  public static func signalsActivity(_ event: SlackMessageEvent) -> Bool {
+    guard event.type == "message", !event.channel.isEmpty else {
+      return false
+    }
+    if event.hidden == true {
+      return false
+    }
+    if let subtype = event.subtype, ignoredSubtypes.contains(subtype) {
+      return false
+    }
+    return true
   }
-}
 
-public enum SlackReadMarker {
-  public static func includes(
-    _ notification: SlackMenuNotification,
-    channelID: String,
-    lastRead: String
+  public static func isMention(
+    _ event: SlackMessageEvent,
+    authenticatedUserID: String
   ) -> Bool {
     guard
-      notification.channelID == channelID,
-      let messageTimestamp = Decimal(string: notification.messageTimestamp),
-      let readTimestamp = Decimal(string: lastRead)
+      signalsActivity(event),
+      !event.timestamp.isEmpty,
+      event.user != authenticatedUserID
     else {
       return false
     }
-    return messageTimestamp <= readTimestamp
+    return mentionsAuthenticatedUser(event, authenticatedUserID)
   }
-}
 
-public enum SlackEventClassifier {
-  private static let supportedSubtypes: Set<String> = [
-    "bot_message",
-    "file_share",
-    "me_message",
-    "thread_broadcast",
-  ]
-
-  public static func classify(
+  private static func mentionsAuthenticatedUser(
     _ event: SlackMessageEvent,
-    authenticatedUserID: String
-  ) -> SlackNotificationKind? {
-    guard
-      event.type == "message",
-      event.hidden != true,
-      !event.channel.isEmpty,
-      !event.timestamp.isEmpty
-    else {
-      return nil
+    _ authenticatedUserID: String
+  ) -> Bool {
+    if event.blockMentionedUserIDs.contains(authenticatedUserID) {
+      return true
     }
-
-    if let subtype = event.subtype, !supportedSubtypes.contains(subtype) {
-      return nil
+    var texts = [event.text]
+    for attachment in event.attachments ?? [] {
+      texts.append(contentsOf: [
+        attachment.fallback,
+        attachment.pretext,
+        attachment.text,
+        attachment.title,
+      ].compactMap { $0 })
     }
-
-    if event.user == authenticatedUserID {
-      return nil
+    return texts.contains {
+      $0.contains("<@\(authenticatedUserID)>")
+        || $0.contains("<@\(authenticatedUserID)|")
     }
-
-    if event.channelType == "im" || event.channel.hasPrefix("D") {
-      return .directMessage
-    }
-
-    if event.text.contains("<@\(authenticatedUserID)>") {
-      return .mention
-    }
-
-    return nil
   }
 }

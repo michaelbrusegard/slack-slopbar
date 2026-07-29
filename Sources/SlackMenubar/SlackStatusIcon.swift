@@ -7,7 +7,16 @@ enum SlackStatusIcon {
     let color: NSColor
   }
 
+  // The two marks are cached: the drawing handler re-runs on every status-item
+  // refresh otherwise, and there are only these two states.
+  private static let filledMark = makeSlackMark(filled: true)
+  private static let outlineMark = makeSlackMark(filled: false)
+
   static func slackMark(filled: Bool) -> NSImage {
+    filled ? filledMark : outlineMark
+  }
+
+  private static func makeSlackMark(filled: Bool) -> NSImage {
     let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
       NSGraphicsContext.current?.shouldAntialias = true
 
@@ -34,18 +43,6 @@ enum SlackStatusIcon {
     // Template images follow the menu-bar tint and appearance. The unread mark
     // opts out so its four notification colors remain visible.
     image.isTemplate = !filled
-    return image
-  }
-
-  static func systemSymbol(
-    named name: String,
-    accessibilityDescription: String
-  ) -> NSImage? {
-    let image = NSImage(
-      systemSymbolName: name,
-      accessibilityDescription: accessibilityDescription
-    )
-    image?.isTemplate = true
     return image
   }
 

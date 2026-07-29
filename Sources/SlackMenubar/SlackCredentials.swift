@@ -25,7 +25,9 @@ struct SlackCredentials: Equatable, Sendable {
   }
 }
 
-@MainActor
+// Deliberately not actor-isolated: the Security framework is thread-safe, and
+// keeping these synchronous keychain IPC calls off the main actor lets launch
+// and token refresh run them from background tasks without beachballing.
 enum SlackCredentialStore {
   private static let service = "com.michaelbrusegard.SlackMenubar.SlackAPI"
   private static let clientIDAccount = "client-id"
