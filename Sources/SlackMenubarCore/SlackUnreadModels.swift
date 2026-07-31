@@ -73,16 +73,56 @@ public enum SlackTimestamp {
 }
 
 public enum SlackSyncPolicy {
-  // conversations.info is a Tier 3 Slack method (50+ calls/minute). Polling
-  // each unread conversation every 1.5 seconds per item keeps the steady
-  // state below that limit, while one pending conversation still refreshes
-  // quickly enough to feel immediate.
-  public static func unreadRecheckInterval(
-    conversationCount: Int
-  ) -> TimeInterval {
-    guard conversationCount > 0 else {
-      return 2
+  // conversations.info is a Tier 3 Slack method (50+ calls/minute). One
+  // rotating check every 1.5 seconds uses 40 calls/minute, leaving headroom
+  // for event-triggered and foreground checks.
+  public static let rotatingRecheckInterval: TimeInterval = 1.5
+}
+
+// A weighted, fair rotation for unread polling. Priority conversations occur
+// twice per cycle, but every ordinary conversation still receives a turn.
+public struct SlackRecheckRotation: Sendable {
+  private var queue: [String] = []
+
+  public init() {}
+
+  public mutating func reset() {
+    queue = []
+  }
+
+  public mutating func promote(_ channelID: String) {
+    queue.removeAll { $0 == channelID }
+    queue.insert(channelID, at: 0)
+  }
+
+  public mutating func next(
+    unreads: [SlackChannelUnread],
+    priorityChannelIDs: Set<String>
+  ) -> String? {
+    let liveIDs = Set(unreads.map(\.channelID))
+    queue.removeAll { !liveIDs.contains($0) }
+
+    if queue.isEmpty {
+      let all = unreads.sorted(by: stableOrder).map(\.channelID)
+      let priority = unreads
+        .filter {
+          $0.kind.isDirect || priorityChannelIDs.contains($0.channelID)
+        }
+        .sorted(by: stableOrder)
+        .map(\.channelID)
+      queue = priority + all
     }
-    return max(2, Double(conversationCount) * 1.5)
+
+    guard !queue.isEmpty else {
+      return nil
+    }
+    return queue.removeFirst()
+  }
+
+  private func stableOrder(
+    _ lhs: SlackChannelUnread,
+    _ rhs: SlackChannelUnread
+  ) -> Bool {
+    lhs.channelID < rhs.channelID
   }
 }

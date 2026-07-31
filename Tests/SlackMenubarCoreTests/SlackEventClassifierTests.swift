@@ -226,12 +226,53 @@ struct SlackEventClassifierTests {
     #expect(SlackTimestamp.isOrdered("garbage", notAfter: "1700000000.000000") == false)
   }
 
-  @Test("Unread refresh scales without exceeding Slack's steady-state rate")
+  @Test("Unread rotation stays below Slack's steady-state rate")
   func unreadRefreshInterval() {
-    #expect(SlackSyncPolicy.unreadRecheckInterval(conversationCount: 0) == 2)
-    #expect(SlackSyncPolicy.unreadRecheckInterval(conversationCount: 1) == 2)
-    #expect(SlackSyncPolicy.unreadRecheckInterval(conversationCount: 2) == 3)
-    #expect(SlackSyncPolicy.unreadRecheckInterval(conversationCount: 20) == 30)
+    #expect(SlackSyncPolicy.rotatingRecheckInterval == 1.5)
+  }
+
+  @Test("Unread rotation prioritizes DMs without starving channels")
+  func prioritizedUnreadRotation() {
+    let channel = unread(id: "C1", kind: .channel)
+    let directMessage = unread(id: "D1", kind: .directMessage)
+    var rotation = SlackRecheckRotation()
+
+    let sequence = (0..<6).compactMap { _ in
+      rotation.next(
+        unreads: [channel, directMessage],
+        priorityChannelIDs: []
+      )
+    }
+
+    #expect(sequence == ["D1", "C1", "D1", "D1", "C1", "D1"])
+  }
+
+  @Test("Promoting an unread makes it the next check")
+  func promotedUnreadRotation() {
+    let first = unread(id: "C1", kind: .channel)
+    let second = unread(id: "C2", kind: .channel)
+    var rotation = SlackRecheckRotation()
+    _ = rotation.next(unreads: [first, second], priorityChannelIDs: [])
+
+    rotation.promote("C2")
+
+    #expect(
+      rotation.next(unreads: [first, second], priorityChannelIDs: []) == "C2"
+    )
+  }
+
+  private func unread(
+    id: String,
+    kind: SlackConversationKind
+  ) -> SlackChannelUnread {
+    SlackChannelUnread(
+      teamID: "T1",
+      channelID: id,
+      name: id,
+      kind: kind,
+      unreadCount: 1,
+      lastRead: "1700000000.000001"
+    )
   }
 
   private func decodeEvent(_ json: String) throws -> SlackMessageEvent {

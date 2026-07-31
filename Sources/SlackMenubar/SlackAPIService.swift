@@ -41,8 +41,8 @@ struct SlackUnreadSyncStatus: Equatable {
 // - Full sweep of every member conversation at connect/reconnect and on
 //   demand (system wake), catching anything missed while offline.
 // - A message event re-checks just that conversation within ~1 second.
-// - Conversations currently unread are re-checked adaptively (about two
-//   seconds for one unread), scaling with the number of API calls needed.
+// - One unread conversation is re-checked every 1.5 seconds. DMs, mentions,
+//   and conversations just opened in Slack get extra turns in a fair queue.
 @MainActor
 final class SlackAPIService {
   var onStateChange: ((SlackConnectionState) -> Void)?
@@ -89,6 +89,10 @@ final class SlackAPIService {
   private var pendingChecks: Set<String> = []
   private var pendingCheckTask: Task<Void, Never>?
   private var activeSyncCount = 0
+  private var recheckRotation = SlackRecheckRotation()
+  private var mentionPriorities: [String: SlackMentionMark] = [:]
+  private var recentlyOpenedUntil: [String: Date] = [:]
+  private var lastRotatingCheckAt: [String: Date] = [:]
 
   func connect(using credentials: SlackCredentials) {
     disconnect(setState: false)
@@ -111,6 +115,10 @@ final class SlackAPIService {
     credentials = nil
     identity = nil
     unreads = [:]
+    mentionPriorities = [:]
+    recentlyOpenedUntil = [:]
+    lastRotatingCheckAt = [:]
+    recheckRotation.reset()
     lastSweepAt = nil
     state = .unconfigured
   }
@@ -147,17 +155,20 @@ final class SlackAPIService {
     }
   }
 
-  // Re-checks every conversation currently marked unread. Called by the
-  // adaptive loop and immediately when the menu opens.
+  // Puts the most useful conversation at the front and checks it now. The
+  // rotating loop handles the rest without creating an API burst.
   func requestRecheck() {
+    recheckRotation.reset()
     Task { [weak self] in
-      await self?.recheckKnownUnreads()
+      await self?.recheckNextUnread()
     }
   }
 
-  // Re-checks one conversation shortly; used after opening it in Slack so a
-  // read there clears the menu quickly.
+  // Re-checks one conversation shortly and gives it priority for several
+  // subsequent turns while Slack advances its read marker.
   func noteActivity(in channelID: String) {
+    recentlyOpenedUntil[channelID] = Date().addingTimeInterval(8)
+    recheckRotation.promote(channelID)
     scheduleCheck(of: channelID)
   }
 
@@ -296,10 +307,13 @@ final class SlackAPIService {
       } else {
         senderName = event.user ?? "Someone"
       }
-      onMention?(
-        event.channel,
-        SlackMentionMark(timestamp: event.timestamp, senderName: senderName)
+      let mark = SlackMentionMark(
+        timestamp: event.timestamp,
+        senderName: senderName
       )
+      mentionPriorities[event.channel] = mark
+      recheckRotation.promote(event.channel)
+      onMention?(event.channel, mark)
     }
 
     scheduleCheck(of: event.channel)
@@ -326,28 +340,59 @@ final class SlackAPIService {
     }
   }
 
-  private func recheckKnownUnreads() async {
-    let channelIDs = Array(unreads.keys)
-    guard !channelIDs.isEmpty, let context = await syncContext() else {
+  private func recheckNextUnread() async {
+    guard
+      let channelID = nextUnreadChannelID(),
+      let context = await syncContext()
+    else {
       return
     }
-    await checkConversations(channelIDs, context: context)
+    lastRotatingCheckAt[channelID] = Date()
+    await checkConversations([channelID], context: context)
+  }
+
+  private func nextUnreadChannelID() -> String? {
+    let now = Date()
+    let liveIDs = Set(unreads.keys)
+    mentionPriorities = mentionPriorities.filter { liveIDs.contains($0.key) }
+    recentlyOpenedUntil = recentlyOpenedUntil.filter {
+      liveIDs.contains($0.key) && $0.value > now
+    }
+    lastRotatingCheckAt = lastRotatingCheckAt.filter {
+      liveIDs.contains($0.key)
+    }
+
+    // Recently opened conversations are checked repeatedly for a short
+    // window. If several were opened, the least recently checked goes first.
+    if let recentlyOpened = recentlyOpenedUntil.keys.min(by: { lhs, rhs in
+      let lhsDate = lastRotatingCheckAt[lhs] ?? .distantPast
+      let rhsDate = lastRotatingCheckAt[rhs] ?? .distantPast
+      if lhsDate != rhsDate {
+        return lhsDate < rhsDate
+      }
+      return lhs < rhs
+    }) {
+      return recentlyOpened
+    }
+
+    return recheckRotation.next(
+      unreads: Array(unreads.values),
+      priorityChannelIDs: Set(mentionPriorities.keys)
+    )
   }
 
   private func startRecheckLoop() {
     recheckLoopTask?.cancel()
     recheckLoopTask = Task { [weak self] in
       while !Task.isCancelled {
-        let unreadCount = self?.unreads.count ?? 0
-        let interval = SlackSyncPolicy.unreadRecheckInterval(
-          conversationCount: unreadCount
-        )
         do {
-          try await Task.sleep(for: .seconds(interval))
+          try await Task.sleep(
+            for: .seconds(SlackSyncPolicy.rotatingRecheckInterval)
+          )
         } catch {
           return
         }
-        await self?.recheckKnownUnreads()
+        await self?.recheckNextUnread()
       }
     }
   }
@@ -443,6 +488,7 @@ final class SlackAPIService {
       syncStatus.isChecking = activeSyncCount > 0
     }
 
+    let previousUnreadIDs = Set(unreads.keys)
     var results: [String: SlackChannelUnread] = [:]
     var checked: Set<String> = []
     for chunkStart in stride(from: 0, to: channelIDs.count, by: 5) {
@@ -494,6 +540,33 @@ final class SlackAPIService {
     }
     for channelID in checked {
       unreads[channelID] = results[channelID] ?? nil
+    }
+
+    let liveIDs = Set(unreads.keys)
+    mentionPriorities = mentionPriorities.filter { channelID, mark in
+      guard let unread = unreads[channelID] else {
+        return false
+      }
+      return !SlackTimestamp.isOrdered(mark.timestamp, notAfter: unread.lastRead)
+    }
+    recentlyOpenedUntil = recentlyOpenedUntil.filter {
+      liveIDs.contains($0.key)
+    }
+    lastRotatingCheckAt = lastRotatingCheckAt.filter {
+      liveIDs.contains($0.key)
+    }
+
+    // A newly discovered DM or mention should not wait behind an existing
+    // rotation. Promotion changes ordering only; event delivery already
+    // triggered the lookup that discovered it.
+    for channelID in liveIDs.subtracting(previousUnreadIDs) {
+      guard
+        unreads[channelID]?.kind.isDirect == true
+          || mentionPriorities[channelID] != nil
+      else {
+        continue
+      }
+      recheckRotation.promote(channelID)
     }
 
     let failureCount = channelIDs.count - checked.count

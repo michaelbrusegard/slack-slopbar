@@ -28,10 +28,10 @@ How it stays correct:
   while the app was closed is missed.
 - Live Socket Mode messages re-check just the affected conversation within
   about a second.
-- Conversations currently unread are re-checked adaptively: about every two
-  seconds when one conversation is pending, scaling with the number of
-  conversations to stay within Slack's API rate limit. Opening the menu also
-  triggers an immediate check.
+- One unread conversation is re-checked every 1.5 seconds. Checks rotate
+  fairly across the unread list, with extra turns for DMs, mentions, and a
+  conversation you just opened. Opening the menu triggers the next priority
+  check immediately.
 - The connection line shows when unread state was last checked and visibly
   reports retries instead of silently treating a failed request as current.
 

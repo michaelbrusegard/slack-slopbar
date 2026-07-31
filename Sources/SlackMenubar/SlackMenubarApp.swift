@@ -802,12 +802,9 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       NSWorkspace.shared.open(url)
     }
 
-    // Reading the conversation in Slack advances its read marker; a quick
-    // re-check clears the menu item without waiting for the 30-second loop.
-    Task { [weak self] in
-      try? await Task.sleep(for: .seconds(5))
-      self?.apiService.requestRecheck()
-    }
+    // Reading the conversation in Slack advances its read marker. Prioritize
+    // this exact conversation until Slack reports that it has been read.
+    apiService.noteActivity(in: channelID)
   }
 
   @objc private func dismissAll() {
