@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Verify tag matches app version
+        run: |
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Packaging/Info.plist)
+          test "v$version" = "$GITHUB_REF_NAME"
+
+      - name: Test
+        run: swift test
+
+      - name: Build universal DMG
+        run: ./scripts/package-dmg.sh
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/*.dmg \
+            dist/*.sha256 \
+            --verify-tag \
+            --generate-notes \
+            --title "Slack Slopbar $GITHUB_REF_NAME"

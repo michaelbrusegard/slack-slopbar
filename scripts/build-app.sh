@@ -16,8 +16,22 @@ case "$configuration" in
 esac
 
 cd "$project_directory"
-swift build --configuration "$configuration" --product SlackSlopbar
-binary_directory=$(swift build --configuration "$configuration" --show-bin-path)
+if [ "$configuration" = "release" ]; then
+    # Release one universal app that runs natively on Apple silicon and Intel.
+    swift build \
+        --configuration release \
+        --product SlackSlopbar \
+        --arch arm64 \
+        --arch x86_64
+    binary_directory=$(swift build \
+        --configuration release \
+        --arch arm64 \
+        --arch x86_64 \
+        --show-bin-path)
+else
+    swift build --configuration debug --product SlackSlopbar
+    binary_directory=$(swift build --configuration debug --show-bin-path)
+fi
 
 rm -rf "$app_directory"
 mkdir -p "$contents_directory/MacOS"

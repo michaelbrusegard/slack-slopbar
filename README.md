@@ -7,6 +7,9 @@ A native macOS menu-bar app for Slack unread notifications.
 It shows unread channels, direct messages, group DMs, and mentions. Reading a
 conversation in Slack clears it automatically from the menu bar.
 
+Download the DMG from [Releases](https://github.com/michaelbrusegard/slack-slopbar/releases),
+drag the app to Applications, then open it from the context menu on first launch.
+
 ## Setup
 
 Open **Slack Setup Assistant…** in the app and follow its instructions to

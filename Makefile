@@ -1,4 +1,4 @@
-.PHONY: build test app install clean
+.PHONY: build test app dmg install clean
 
 build:
 	swift build
@@ -9,10 +9,12 @@ test:
 app:
 	./scripts/build-app.sh release
 
+dmg:
+	./scripts/package-dmg.sh
+
 install:
 	./scripts/install-app.sh
 
 clean:
 	swift package clean
-	rm -rf build
-
+	rm -rf build dist
