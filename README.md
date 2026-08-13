@@ -8,7 +8,15 @@ It shows unread channels, direct messages, group DMs, and mentions. Reading a
 conversation in Slack clears it automatically from the menu bar.
 
 Download the DMG from [Releases](https://github.com/michaelbrusegard/slack-slopbar/releases),
-drag the app to Applications, then open it from the context menu on first launch.
+drag the app to Applications, then Control-click it and choose **Open**. The app
+is not notarized yet, so a normal first double-click may be blocked by macOS.
+
+If macOS still refuses to open it:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Slack Slopbar.app"
+open "/Applications/Slack Slopbar.app"
+```
 
 ## Setup
 
