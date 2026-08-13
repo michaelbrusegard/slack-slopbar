@@ -1,5 +1,5 @@
 import Foundation
-import SlackMenubarCore
+import SlackSlopbarCore
 
 // Holds the displayed unread state: the API service pushes authoritative
 // unread snapshots in, and this store layers on the pieces Slack's API cannot
@@ -32,8 +32,10 @@ final class SlackUnreadStore {
   private let encoder = JSONEncoder()
 
   init() {
+    let data = UserDefaults.standard.data(forKey: defaultsKey)
+      ?? migrateLegacyDefaults()
     guard
-      let data = UserDefaults.standard.data(forKey: defaultsKey),
+      let data,
       let state = try? JSONDecoder().decode(PersistedState.self, from: data)
     else {
       return
@@ -42,6 +44,17 @@ final class SlackUnreadStore {
     mentionMarks = state.mentionMarks
     dismissals = state.dismissals
     teamID = state.teamID
+  }
+
+  private func migrateLegacyDefaults() -> Data? {
+    // Preserve the instant launch snapshot across the product/bundle rename.
+    let legacy = UserDefaults(suiteName: "com.michaelbrusegard.SlackMenubar")
+    guard let data = legacy?.data(forKey: defaultsKey) else {
+      return nil
+    }
+    UserDefaults.standard.set(data, forKey: defaultsKey)
+    legacy?.removeObject(forKey: defaultsKey)
+    return data
   }
 
   var visibleUnreads: [SlackChannelUnread] {

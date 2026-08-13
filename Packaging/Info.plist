@@ -5,32 +5,32 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>SlackMenubar</string>
+    <string>SlackSlopbar</string>
     <key>CFBundleIdentifier</key>
-    <string>com.michaelbrusegard.SlackMenubar</string>
+    <string>com.michaelbrusegard.SlackSlopbar</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Slack Menubar</string>
+    <string>Slack Slopbar</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
             <key>CFBundleURLName</key>
-            <string>Slack Menubar OAuth</string>
+            <string>Slack Slopbar OAuth</string>
             <key>CFBundleTypeRole</key>
             <string>Editor</string>
             <key>CFBundleURLSchemes</key>
             <array>
-                <string>slackmenubar</string>
+                <string>slackslopbar</string>
             </array>
         </dict>
     </array>
     <key>CFBundleShortVersionString</key>
-    <string>3.0.1</string>
+    <string>3.1.0</string>
     <key>CFBundleVersion</key>
-    <string>17</string>
+    <string>18</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>

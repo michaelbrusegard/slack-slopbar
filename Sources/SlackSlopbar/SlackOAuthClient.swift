@@ -57,7 +57,7 @@ struct SlackOAuthRequest: Sendable {
 }
 
 enum SlackOAuthClient {
-  static let redirectURI = "slackmenubar://oauth"
+  static let redirectURI = "slackslopbar://oauth"
   static let userScopes = [
     "channels:history",
     "channels:read",

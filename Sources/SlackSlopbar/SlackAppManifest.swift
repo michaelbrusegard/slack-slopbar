@@ -15,7 +15,7 @@ enum SlackAppManifest {
   static var yaml: String {
     var lines = [
       "display_information:",
-      "  name: Slack Menubar",
+      "  name: Slack Slopbar",
       "  description: Personal macOS menu-bar notifications for Slack DMs and mentions",
       "  background_color: \"#4A154B\"",
       "oauth_config:",

@@ -1,15 +1,15 @@
 import AppKit
 import OSLog
 import ServiceManagement
-import SlackMenubarCore
+import SlackSlopbarCore
 
 @main
 @MainActor
-final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class SlackSlopbarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let apiService = SlackAPIService()
   private let unreadStore = SlackUnreadStore()
   private let logger = Logger(
-    subsystem: "com.michaelbrusegard.SlackMenubar",
+    subsystem: "com.michaelbrusegard.SlackSlopbar",
     category: "SlackAPI"
   )
 
@@ -24,11 +24,11 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   // NSApplication.delegate is unretained; without a strong reference the
   // delegate could be deallocated once main()'s local goes out of scope.
-  private static var sharedDelegate: SlackMenubarApp?
+  private static var sharedDelegate: SlackSlopbarApp?
 
   static func main() {
     let application = NSApplication.shared
-    let delegate = SlackMenubarApp()
+    let delegate = SlackSlopbarApp()
     sharedDelegate = delegate
     application.delegate = delegate
     application.setActivationPolicy(.accessory)
@@ -93,7 +93,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   func application(_ application: NSApplication, open urls: [URL]) {
     guard let callbackURL = urls.first(where: {
-      $0.scheme == "slackmenubar" && $0.host == "oauth"
+      $0.scheme == "slackslopbar" && $0.host == "oauth"
     }) else {
       return
     }
@@ -367,7 +367,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   private func makeQuitMenuItem() -> NSMenuItem {
     let item = NSMenuItem(
-      title: "Quit Slack Menubar",
+      title: "Quit Slack Slopbar",
       action: #selector(quit),
       keyEquivalent: "q"
     )
@@ -405,7 +405,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     appTokenField.controlSize = .regular
     appTokenField.translatesAutoresizingMaskIntoConstraints = false
 
-    let title = NSTextField(labelWithString: "Connect Slack Menubar")
+    let title = NSTextField(labelWithString: "Connect Slack Slopbar")
     title.font = .systemFont(ofSize: 24, weight: .semibold)
 
     let introduction = setupDescription(
@@ -443,7 +443,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let detailsTitle = setupSectionTitle("2. Choose the workspace and enter app details")
     let detailsDescription = setupDescription(
       """
-      Select the same workspace used during app creation. Then, on Basic Information, copy Client ID from App Credentials. Under App-Level Tokens, generate a token named Slack Menubar with the connections:write scope.
+      Select the same workspace used during app creation. Then, on Basic Information, copy Client ID from App Credentials. Under App-Level Tokens, generate a token named Slack Slopbar with the connections:write scope.
       """
     )
     let workspaceLabel = setupFieldLabel("Target workspace")
@@ -551,7 +551,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
       backing: .buffered,
       defer: false
     )
-    window.title = "Slack Menubar Setup"
+    window.title = "Slack Slopbar Setup"
     window.contentView = contentView
     // Sizing from the layout means added steps or longer text can never be
     // clipped by a hard-coded window height.
@@ -665,7 +665,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     guard let authorizationURL = oauthRequest.authorizationURL else {
       showError(
         title: "Could not start Slack authorization",
-        message: "Slack Menubar could not construct the authorization URL."
+        message: "Slack Slopbar could not construct the authorization URL."
       )
       return
     }
@@ -748,7 +748,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let alert = NSAlert()
     alert.messageText = "Slack authorization is complete"
     alert.informativeText =
-      "Slack Menubar is connecting now. The menu will show the workspace name once it is ready."
+      "Slack Slopbar is connecting now. The menu will show the workspace name once it is ready."
     alert.alertStyle = .informational
     alert.addButton(withTitle: "Done")
     NSApplication.shared.activate(ignoringOtherApps: true)
@@ -759,7 +759,7 @@ final class SlackMenubarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let alert = NSAlert()
     alert.messageText = "Sign out of Slack?"
     alert.informativeText =
-      "Slack Menubar will disconnect, remove its Slack tokens from the Keychain, and clear pending notifications."
+      "Slack Slopbar will disconnect, remove its Slack tokens from the Keychain, and clear pending notifications."
     alert.alertStyle = .warning
     alert.addButton(withTitle: "Sign Out")
     alert.addButton(withTitle: "Cancel")

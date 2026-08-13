@@ -3,25 +3,25 @@
 import PackageDescription
 
 let package = Package(
-  name: "SlackMenubar",
+  name: "SlackSlopbar",
   platforms: [
     .macOS(.v13)
   ],
   products: [
-    .library(name: "SlackMenubarCore", targets: ["SlackMenubarCore"]),
-    .executable(name: "SlackMenubar", targets: ["SlackMenubar"]),
+    .library(name: "SlackSlopbarCore", targets: ["SlackSlopbarCore"]),
+    .executable(name: "SlackSlopbar", targets: ["SlackSlopbar"]),
   ],
   targets: [
     .target(
-      name: "SlackMenubarCore"
+      name: "SlackSlopbarCore"
     ),
     .executableTarget(
-      name: "SlackMenubar",
-      dependencies: ["SlackMenubarCore"]
+      name: "SlackSlopbar",
+      dependencies: ["SlackSlopbarCore"]
     ),
     .testTarget(
-      name: "SlackMenubarCoreTests",
-      dependencies: ["SlackMenubarCore"]
+      name: "SlackSlopbarCoreTests",
+      dependencies: ["SlackSlopbarCore"]
     ),
   ]
 )

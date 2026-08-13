@@ -29,7 +29,10 @@ struct SlackCredentials: Equatable, Sendable {
 // keeping these synchronous keychain IPC calls off the main actor lets launch
 // and token refresh run them from background tasks without beachballing.
 enum SlackCredentialStore {
-  private static let service = "com.michaelbrusegard.SlackMenubar.SlackAPI"
+  private static let service = "com.michaelbrusegard.SlackSlopbar.SlackAPI"
+  // One-time migration from the application's former name. Remove this after
+  // every installed copy has had a chance to launch Slack Slopbar once.
+  private static let legacyService = "com.michaelbrusegard.SlackMenubar.SlackAPI"
   private static let clientIDAccount = "client-id"
   private static let appTokenAccount = "app-token"
   private static let userTokenAccount = "user-token"
@@ -37,21 +40,35 @@ enum SlackCredentialStore {
   private static let expiresAtAccount = "expires-at"
 
   static func load() throws -> SlackCredentials? {
+    if let credentials = try load(service: service) {
+      return credentials
+    }
+    guard let credentials = try load(service: legacyService) else {
+      return nil
+    }
+    try save(credentials)
+    // The former item's ACL may reject deletion from the renamed bundle even
+    // though macOS allowed it to be read. The new copy is authoritative.
+    try? remove(service: legacyService)
+    return credentials
+  }
+
+  private static func load(service: String) throws -> SlackCredentials? {
     guard
-      let appToken = try read(account: appTokenAccount),
-      let userToken = try read(account: userTokenAccount)
+      let appToken = try read(account: appTokenAccount, service: service),
+      let userToken = try read(account: userTokenAccount, service: service)
     else {
       return nil
     }
     let expiresAt =
-      try read(account: expiresAtAccount)
+      try read(account: expiresAtAccount, service: service)
       .flatMap(TimeInterval.init)
       .map(Date.init(timeIntervalSince1970:))
     return SlackCredentials(
-      clientID: try read(account: clientIDAccount),
+      clientID: try read(account: clientIDAccount, service: service),
       appToken: appToken,
       userToken: userToken,
-      refreshToken: try read(account: refreshTokenAccount),
+      refreshToken: try read(account: refreshTokenAccount, service: service),
       expiresAt: expiresAt
     )
   }
@@ -68,14 +85,19 @@ enum SlackCredentialStore {
   }
 
   static func remove() throws {
-    try delete(account: clientIDAccount)
-    try delete(account: appTokenAccount)
-    try delete(account: userTokenAccount)
-    try delete(account: refreshTokenAccount)
-    try delete(account: expiresAtAccount)
+    try remove(service: service)
+    try? remove(service: legacyService)
   }
 
-  private static func read(account: String) throws -> String? {
+  private static func remove(service: String) throws {
+    try delete(account: clientIDAccount, service: service)
+    try delete(account: appTokenAccount, service: service)
+    try delete(account: userTokenAccount, service: service)
+    try delete(account: refreshTokenAccount, service: service)
+    try delete(account: expiresAtAccount, service: service)
+  }
+
+  private static func read(account: String, service: String) throws -> String? {
     let query: [CFString: Any] = [
       kSecClass: kSecClassGenericPassword,
       kSecAttrService: service,
@@ -137,7 +159,10 @@ enum SlackCredentialStore {
     }
   }
 
-  private static func delete(account: String) throws {
+  private static func delete(
+    account: String,
+    service: String = SlackCredentialStore.service
+  ) throws {
     let query: [CFString: Any] = [
       kSecClass: kSecClassGenericPassword,
       kSecAttrService: service,

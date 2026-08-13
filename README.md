@@ -1,9 +1,9 @@
-# Slack Menubar
+# Slack Slopbar
 
 A native macOS menu-bar utility that shows everything you have not read in
 Slack: unread channels, direct messages, group DMs, and mentions.
 
-Slack Menubar connects directly to Slack using a private Slack app. Slack's
+Slack Slopbar connects directly to Slack using a private Slack app. Slack's
 own per-conversation read state is the source of truth, so the menu matches
 Slack exactly — it survives app restarts, network drops, and reading on other
 devices. Socket Mode events only make updates instant.
@@ -42,7 +42,7 @@ menu fills in progressively afterward.
 
 ## Slack app setup
 
-Slack Menubar includes a setup assistant. Open the menu-bar item and choose
+Slack Slopbar includes a setup assistant. Open the menu-bar item and choose
 **Slack Setup Assistant…**:
 
 1. Select **Copy Manifest**, then **Create Slack App**. The assistant opens
@@ -52,16 +52,16 @@ Slack Menubar includes a setup assistant. Open the menu-bar item and choose
    **Next**, review the configuration, and create the app.
 3. Under **Basic Information → App Credentials**, copy the **Client ID**.
 4. On the same page under **App-Level Tokens**, select **Generate Token and
-   Scopes**. Name it `Slack Menubar`, add `connections:write`, and copy the
+   Scopes**. Name it `Slack Slopbar`, add `connections:write`, and copy the
    generated token beginning with `xapp-`.
 5. Return to the assistant, enter those two values, and select
    the target workspace detected from Slack desktop. Select **Connect with
    Slack**.
 6. Confirm the same workspace on Slack's permission page and approve the
-   requested access. Slack returns directly to Slack Menubar and the connection
+   requested access. Slack returns directly to Slack Slopbar and the connection
    starts automatically.
 
-You never need to find or paste a user OAuth token. Slack Menubar uses PKCE,
+You never need to find or paste a user OAuth token. Slack Slopbar uses PKCE,
 stores its rotating access and refresh tokens only in macOS Keychain, and
 refreshes them automatically. Tokens are never written to the repository,
 UserDefaults, or logs.
@@ -78,7 +78,7 @@ Slack requires message-history scopes to deliver user-level message events.
 The manifest requests access to public channels, private channels, DMs, and
 group DMs that the authorizing user can already access, plus basic user names.
 
-Slack Menubar tracks unread state for every conversation you are a member of
+Slack Slopbar tracks unread state for every conversation you are a member of
 and detects mentions of your Slack user ID in live messages, including
 mentions inside bot messages' Block Kit content and legacy attachments.
 
@@ -99,7 +99,7 @@ make install
 ```
 
 `make install` builds a signed application, installs it at
-`~/Applications/Slack Menubar.app`, and opens it.
+`~/Applications/Slack Slopbar.app`, and opens it.
 
 When an Apple Development signing identity is available, the build uses it.
 Otherwise, it falls back to ad-hoc signing.
@@ -108,7 +108,7 @@ You can build without installing:
 
 ```sh
 make app
-open "build/Slack Menubar.app"
+open "build/Slack Slopbar.app"
 ```
 
 Open `Package.swift` in Xcode for development.

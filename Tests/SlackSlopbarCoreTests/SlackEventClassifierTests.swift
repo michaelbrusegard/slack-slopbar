@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import SlackMenubarCore
+@testable import SlackSlopbarCore
 
 @Suite("Slack event classification")
 struct SlackEventClassifierTests {

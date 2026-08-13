@@ -4,7 +4,7 @@ set -eu
 
 project_directory=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 configuration=${1:-release}
-app_directory="$project_directory/build/Slack Menubar.app"
+app_directory="$project_directory/build/Slack Slopbar.app"
 contents_directory="$app_directory/Contents"
 
 case "$configuration" in
@@ -16,13 +16,13 @@ case "$configuration" in
 esac
 
 cd "$project_directory"
-swift build --configuration "$configuration" --product SlackMenubar
+swift build --configuration "$configuration" --product SlackSlopbar
 binary_directory=$(swift build --configuration "$configuration" --show-bin-path)
 
 rm -rf "$app_directory"
 mkdir -p "$contents_directory/MacOS"
 mkdir -p "$contents_directory/Resources"
-cp "$binary_directory/SlackMenubar" "$contents_directory/MacOS/SlackMenubar"
+cp "$binary_directory/SlackSlopbar" "$contents_directory/MacOS/SlackSlopbar"
 cp "$project_directory/Packaging/Info.plist" "$contents_directory/Info.plist"
 
 codesign_identity=${CODESIGN_IDENTITY:-}

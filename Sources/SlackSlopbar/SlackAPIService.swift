@@ -1,6 +1,6 @@
 import Foundation
 import OSLog
-import SlackMenubarCore
+import SlackSlopbarCore
 
 enum SlackConnectionState: Equatable {
   case unconfigured
@@ -52,7 +52,7 @@ final class SlackAPIService {
   var onMention: ((String, SlackMentionMark) -> Void)?
 
   private let logger = Logger(
-    subsystem: "com.michaelbrusegard.SlackMenubar",
+    subsystem: "com.michaelbrusegard.SlackSlopbar",
     category: "SlackAPI"
   )
 
